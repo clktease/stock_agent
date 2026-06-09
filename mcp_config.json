@@ -1,0 +1,35 @@
+# Stock Analysis Deep Agent – MCP Configuration
+# ================================================
+# This file configures MCP clients to connect to external MCP servers.
+# Add or remove servers as needed.
+
+{
+  "mcpServers": {
+    # ── Local Stock Analysis MCP Server ───────────────────────────────────────
+    # Runs our mcp_server.py over stdio
+    "stock-analysis": {
+      "command": "python",
+      "args": ["mcp_server.py"],
+      "cwd": ".",
+      "transport": "stdio"
+    },
+
+    # ── Alpha Vantage MCP (optional – requires ALPHA_VANTAGE_API_KEY) ─────────
+    # Provides additional fundamental and economic data
+    # "alphavantage": {
+    #   "url": "https://mcp.alphavantage.co/mcp",
+    #   "transport": "sse",
+    #   "headers": {
+    #     "x-api-key": "${ALPHA_VANTAGE_API_KEY}"
+    #   }
+    # },
+
+    # ── Filesystem MCP (optional) ─────────────────────────────────────────────
+    # Allows agent to save analysis reports to disk
+    # "filesystem": {
+    #   "command": "npx",
+    #   "args": ["-y", "@modelcontextprotocol/server-filesystem", "./reports"],
+    #   "transport": "stdio"
+    # }
+  }
+}
