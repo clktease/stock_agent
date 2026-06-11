@@ -128,6 +128,65 @@
       50%      { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
     }
 
+    /* Session badge + New Chat button */
+    .session-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .session-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 3px 9px;
+      font-family: 'Fira Code', 'Courier New', monospace;
+      letter-spacing: 0.03em;
+    }
+    .session-badge .sb-icon { opacity: 0.5; font-style: normal; font-size: 10px; }
+    #history-badge {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: rgba(99,102,241,0.15);
+      color: #a5b4fc;
+      border: 1px solid rgba(99,102,241,0.25);
+    }
+    #new-chat-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.04);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+      white-space: nowrap;
+    }
+    #new-chat-btn:hover {
+      border-color: rgba(99,102,241,0.4);
+      background: rgba(99,102,241,0.08);
+      color: #a5b4fc;
+    }
+    #new-chat-btn:active { transform: scale(0.97); }
+    .header-divider {
+      width: 1px; height: 20px;
+      background: var(--panel-border);
+      margin: 0 4px;
+    }
+
     /* ─── Body ──────────────────────────────────────────────────────── */
     #body {
       display: flex;
@@ -685,6 +744,15 @@
       <div class="legend-badge rag"><div class="legend-dot"></div>RAG</div>
     </div>
     <div class="ws-status">
+      <div class="session-info">
+        <div class="session-badge">
+          <em class="sb-icon">ID</em>
+          <span id="session-id-label">—</span>
+        </div>
+        <div id="history-badge">💬 <span id="history-count">0</span> turns</div>
+        <button id="new-chat-btn" onclick="startNewChat()" title="Clear history and start a new conversation">✦ New Chat</button>
+      </div>
+      <div class="header-divider"></div>
       <div class="ws-dot" id="ws-dot"></div>
       <span id="ws-label">Disconnected</span>
     </div>
@@ -885,6 +953,7 @@ let isProcessing  = false;
 let reconnectDelay = 1500;
 let reconnectTimer = null;
 let thinkingEl    = null;
+let currentSessionId = null;
 
 const currentRunIds  = new Map();  // run_id -> .tool-item element
 const sessionStats   = { queries: 0, toolCalls: 0, layers: new Set() };
@@ -951,13 +1020,69 @@ function setStatus(connected) {
 ═══════════════════════════════════════════════════════════════ */
 function handleMessage(msg) {
   switch (msg.type) {
-    case 'thinking':  showThinking();                  break;
-    case 'tool_call': addToolCallItem(msg);            break;
-    case 'tool_done': completeToolCall(msg);           break;
-    case 'response':  addAIMessage(msg.content);       break;
-    case 'done':      finishQuery(msg.elapsed, false); break;
-    case 'error':     showError(msg.message);          break;
+    case 'session':   onSession(msg);                              break;
+    case 'thinking':  showThinking();                              break;
+    case 'tool_call': addToolCallItem(msg);                       break;
+    case 'tool_done': completeToolCall(msg);                      break;
+    case 'response':  addAIMessage(msg.content);                  break;
+    case 'done':      finishQuery(msg.elapsed, false, msg.history_count); break;
+    case 'error':     showError(msg.message);                     break;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Session Management
+═══════════════════════════════════════════════════════════════ */
+function onSession(msg) {
+  currentSessionId = msg.session_id;
+  document.getElementById('session-id-label').textContent = msg.session_id.slice(0, 8);
+  updateHistoryBadge(msg.history_count || 0);
+}
+
+function updateHistoryBadge(count) {
+  const badge = document.getElementById('history-badge');
+  document.getElementById('history-count').textContent = count;
+  badge.style.display = count > 0 ? 'flex' : 'none';
+}
+
+function startNewChat() {
+  if (isProcessing) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showError('Not connected. Reconnecting…');
+    connect();
+    return;
+  }
+  // Clear chat UI
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '';
+  addWelcomeCard();
+  // Clear tracker
+  clearTracker();
+  const sb = document.getElementById('stats-bar');
+  sb.style.display = 'none';
+  sb.innerHTML = '';
+  sessionStats.queries = 0;
+  updateTrackerStats();
+  updateHistoryBadge(0);
+  // Tell server to reset history (same session ID, cleared messages)
+  ws.send(JSON.stringify({ type: 'new_session' }));
+}
+
+function addWelcomeCard() {
+  const wc = document.createElement('div');
+  wc.className = 'welcome-card';
+  wc.innerHTML = [
+    '<div class="wc-icon">📈</div>',
+    '<h2>Stock Analysis Deep Agent</h2>',
+    '<div class="wc-sub">New session started  ·  Context cleared</div>',
+    '<div class="wc-features">',
+    '  <div class="wc-feat skill"><div class="feat-icon">⚡</div><div class="feat-name">SKILL</div><div class="feat-desc">yfinance · real-time prices · technical indicators</div></div>',
+    '  <div class="wc-feat mcp"><div class="feat-icon">🌐</div><div class="feat-name">MCP</div><div class="feat-desc">FRED API · SEC EDGAR · macro economic data</div></div>',
+    '  <div class="wc-feat rag"><div class="feat-icon">🧠</div><div class="feat-name">RAG</div><div class="feat-desc">FAISS knowledge base · investment theory</div></div>',
+    '</div>',
+    '<div class="wc-hint">Ask me anything to get started</div>',
+  ].join('');
+  msgs.appendChild(wc);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1173,7 +1298,7 @@ function updateTrackerStats() {
 /* ═══════════════════════════════════════════════════════════════
    Finish Query
 ═══════════════════════════════════════════════════════════════ */
-function finishQuery(elapsed, isError) {
+function finishQuery(elapsed, isError, historyCount) {
   isProcessing = false;
   setInputEnabled(true);
   removeThinking();
@@ -1184,6 +1309,7 @@ function finishQuery(elapsed, isError) {
     sessionStats.queries++;
     updateTrackerStats();
     showStatsBar(elapsed);
+    if (historyCount != null) updateHistoryBadge(historyCount);
   }
 }
 

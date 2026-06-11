@@ -303,8 +303,8 @@ async def build_agent(with_mcp: bool = False):
         * portfolio-manager    -> calculate_portfolio_metrics + compare_stocks
                                   + get_economic_indicators (MCP) + search_market_history (RAG)
     """
-    model          = os.environ.get("AGENT_MODEL", "openai:gpt-4o")
-    subagent_model = os.environ.get("SUBAGENT_MODEL", "openai:gpt-4o-mini")
+    model          = os.environ.get("AGENT_MODEL", "openai:gpt-5.2")
+    subagent_model = os.environ.get("SUBAGENT_MODEL", "openai:gpt-5.2")
     skills_dir     = str(Path(__file__).parent / "skills")
 
     # -- Import individual skills -----------------------------------------------
