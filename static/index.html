@@ -954,6 +954,8 @@ let reconnectDelay = 1500;
 let reconnectTimer = null;
 let thinkingEl    = null;
 let currentSessionId = null;
+let currentStreamCard = null;
+let currentStreamText = '';
 
 const currentRunIds  = new Map();  // run_id -> .tool-item element
 const sessionStats   = { queries: 0, toolCalls: 0, layers: new Set() };
@@ -1022,12 +1024,42 @@ function handleMessage(msg) {
   switch (msg.type) {
     case 'session':   onSession(msg);                              break;
     case 'thinking':  showThinking();                              break;
+    case 'token':     onToken(msg.content);                        break;
     case 'tool_call': addToolCallItem(msg);                       break;
     case 'tool_done': completeToolCall(msg);                      break;
     case 'response':  addAIMessage(msg.content);                  break;
     case 'done':      finishQuery(msg.elapsed, false, msg.history_count); break;
     case 'error':     showError(msg.message);                     break;
   }
+}
+
+function onToken(text) {
+  if (text === null || text === undefined) return;
+  
+  let tokenStr = '';
+  if (typeof text === 'string') {
+    tokenStr = text;
+  } else if (typeof text === 'object') {
+    tokenStr = text.content || text.text || JSON.stringify(text);
+  } else {
+    tokenStr = String(text);
+  }
+
+  removeThinking();
+  if (!currentStreamCard) {
+    const row  = makeEl('div', 'msg-row ai');
+    const card = makeEl('div', 'ai-card md-content');
+    row.appendChild(card);
+    appendMessage(row);
+    currentStreamCard = card;
+    currentStreamText = '';
+  }
+  currentStreamText += tokenStr;
+  currentStreamCard.innerHTML = marked.parse(currentStreamText || '');
+  
+  // Auto-scroll messages
+  const msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1064,6 +1096,8 @@ function startNewChat() {
   sessionStats.queries = 0;
   updateTrackerStats();
   updateHistoryBadge(0);
+  currentStreamCard = null;
+  currentStreamText = '';
   // Tell server to reset history (same session ID, cleared messages)
   ws.send(JSON.stringify({ type: 'new_session' }));
 }
@@ -1111,6 +1145,8 @@ function sendQuery() {
   currentQuery.tools    = 0;
   currentQuery.layers   = new Map();
   currentQuery.startTime = Date.now();
+  currentStreamCard     = null;
+  currentStreamText     = '';
 
   // Hide stats bar
   const sb = document.getElementById('stats-bar');
@@ -1133,11 +1169,17 @@ function addUserMessage(text) {
 
 function addAIMessage(markdownText) {
   removeThinking();
-  const row  = makeEl('div', 'msg-row ai');
-  const card = makeEl('div', 'ai-card md-content');
-  card.innerHTML = marked.parse(markdownText || '');
-  row.appendChild(card);
-  appendMessage(row);
+  if (currentStreamCard) {
+    currentStreamCard.innerHTML = marked.parse(markdownText || '');
+    currentStreamCard = null;
+    currentStreamText = '';
+  } else {
+    const row  = makeEl('div', 'msg-row ai');
+    const card = makeEl('div', 'ai-card md-content');
+    card.innerHTML = marked.parse(markdownText || '');
+    row.appendChild(card);
+    appendMessage(row);
+  }
 }
 
 function showThinking() {
@@ -1184,6 +1226,13 @@ function appendMessage(el) {
 ═══════════════════════════════════════════════════════════════ */
 function addToolCallItem(msg) {
   const { tool, layer, args, summary, run_id } = msg;
+
+  // Discard any active stream card because we have transitioned to a tool call
+  if (currentStreamCard) {
+    currentStreamCard.parentElement.remove();
+    currentStreamCard = null;
+    currentStreamText = '';
+  }
 
   // Hide empty state
   const emptyEl = document.getElementById('empty-tracker');

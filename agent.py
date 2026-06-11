@@ -303,8 +303,14 @@ async def build_agent(with_mcp: bool = False):
         * portfolio-manager    -> calculate_portfolio_metrics + compare_stocks
                                   + get_economic_indicators (MCP) + search_market_history (RAG)
     """
-    model          = os.environ.get("AGENT_MODEL", "openai:gpt-5.2")
-    subagent_model = os.environ.get("SUBAGENT_MODEL", "openai:gpt-5.2")
+    from langchain.chat_models import init_chat_model
+    from deepagents.profiles.provider.provider_profiles import apply_provider_profile
+
+    model_name = os.environ.get("AGENT_MODEL", "openai:gpt-5.2")
+    subagent_model_name = os.environ.get("SUBAGENT_MODEL", "openai:gpt-5.2")
+
+    model = init_chat_model(model_name, streaming=True, **apply_provider_profile(model_name))
+    subagent_model = init_chat_model(subagent_model_name, streaming=True, **apply_provider_profile(subagent_model_name))
     skills_dir     = str(Path(__file__).parent / "skills")
 
     # -- Import individual skills -----------------------------------------------

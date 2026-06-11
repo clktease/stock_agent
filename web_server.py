@@ -18,7 +18,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -142,6 +142,33 @@ def _args_summary(tool_name: str, args: dict) -> str:
     return vals[0][:80] if vals else ""
 
 
+def extract_clean_text(val) -> str:
+    if not val:
+        return ""
+    if isinstance(val, str):
+        stripped = val.strip()
+        if (stripped.startswith("[") and stripped.endswith("]")) or (stripped.startswith("{") and stripped.endswith("}")):
+            try:
+                parsed = ast.literal_eval(stripped)
+                return extract_clean_text(parsed)
+            except Exception:
+                try:
+                    parsed = json.loads(stripped)
+                    return extract_clean_text(parsed)
+                except Exception:
+                    pass
+        return val
+    if isinstance(val, list):
+        return "".join(extract_clean_text(item) for item in val)
+    if isinstance(val, dict):
+        if val.get("type") == "text" or "text" in val:
+            return extract_clean_text(val.get("text", ""))
+        if "content" in val:
+            return extract_clean_text(val.get("content", ""))
+        return ""
+    return str(val)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # WebSocket Callback Handler
 # ─────────────────────────────────────────────────────────────────────────────
@@ -153,12 +180,82 @@ class WebSocketCallbackHandler(AsyncCallbackHandler):
         super().__init__()
         self.ws = ws
         self._run_start: dict[str, float] = {}
+        self._tool_descendants: set[str] = set()
 
     async def _send(self, payload: dict) -> None:
         try:
             await self.ws.send_json(payload)
         except Exception:
             pass
+
+    async def on_chain_start(
+        self,
+        serialized: dict,
+        inputs: dict,
+        *,
+        run_id,
+        parent_run_id=None,
+        **kwargs,
+    ) -> None:
+        rid = str(run_id)
+        pid = str(parent_run_id) if parent_run_id else None
+        if pid in self._run_start or pid in self._tool_descendants:
+            self._tool_descendants.add(rid)
+
+    async def on_llm_start(
+        self,
+        serialized: dict,
+        prompts: list,
+        *,
+        run_id,
+        parent_run_id=None,
+        **kwargs,
+    ) -> None:
+        rid = str(run_id)
+        pid = str(parent_run_id) if parent_run_id else None
+        if pid in self._run_start or pid in self._tool_descendants:
+            self._tool_descendants.add(rid)
+
+    async def on_llm_new_token(
+        self,
+        token: Any,
+        *,
+        chunk=None,
+        run_id,
+        parent_run_id=None,
+        **kwargs,
+    ) -> None:
+        rid = str(run_id)
+        pid = str(parent_run_id) if parent_run_id else None
+        if pid in self._run_start or pid in self._tool_descendants or rid in self._tool_descendants:
+            return
+
+        # Check if this chunk is generating a tool call
+        if chunk is not None:
+            msg = getattr(chunk, "message", chunk)
+            if getattr(msg, "tool_call_chunks", None):
+                return
+            add_kwargs = getattr(msg, "additional_kwargs", {})
+            if add_kwargs and "tool_calls" in add_kwargs:
+                return
+
+        # Extract underlying content if it is an object
+        raw_val = token
+        if hasattr(token, "content"):
+            raw_val = token.content
+
+        # Extract text content from token robustly (handles raw strings, dicts, lists, JSON content blocks)
+        content_str = extract_clean_text(raw_val)
+
+        if not content_str:
+            return
+
+        # Double check if content_str looks like a JSON tool call
+        stripped = content_str.strip()
+        if stripped.startswith('{"tool_calls"') or stripped.startswith('{"name": "task"'):
+            return
+
+        await self._send({"type": "token", "content": content_str})
 
     async def on_tool_start(
         self,
