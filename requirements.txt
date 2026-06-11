@@ -16,3 +16,13 @@ aiohttp
 tavily-python
 python-dotenv
 rich
+# RAG dependencies
+faiss-cpu
+# Web UI backend
+fastapi
+uvicorn[standard]
+langchain-huggingface
+sentence-transformers
+pypdf
+unstructured
+beautifulsoup4

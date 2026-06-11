@@ -44,6 +44,7 @@ load_dotenv(Path(__file__).parent / ".env")
 # ── Imports after env is loaded ───────────────────────────────────────────────
 from deepagents import create_deep_agent
 from skills import ALL_SKILLS
+from rag_tools import RAG_TOOLS, preload_vectorstores, search_investment_knowledge, search_market_history
 
 console = Console()
 
@@ -286,24 +287,27 @@ async def build_agent(with_mcp: bool = False):
     """Build and return the Deep Agent instance with tiered tool architecture.
 
     Tool Architecture
-    ─────────────────
-    Global tools  → Orchestrator + all sub-agents (generic / cross-cutting)
-        • compare_stocks   – side-by-side multi-stock comparison
-        • screen_stocks    – screener, useful in any discovery task
-        • search_news      – Tavily web search (optional, if key is set)
-        • MCP tools        – external tool bridge (optional, if --with-mcp)
+    -----------------
+    Global tools  -> Orchestrator + all sub-agents (generic / cross-cutting)
+        * compare_stocks   - side-by-side multi-stock comparison
+        * screen_stocks    - screener, useful in any discovery task
+        * search_news      - Tavily web search (optional, if key is set)
 
-    Skill-bound tools → Only the sub-agent that owns that skill
-        • technical-analyst    → get_stock_price + calculate_technical_indicators
-        • fundamental-analyst  → get_fundamental_data
-        • news-sentiment-analyst → search_news (global) only
-        • portfolio-manager    → calculate_portfolio_metrics + compare_stocks
+    Skill-bound tools -> Only the sub-agent that owns that skill
+        * technical-analyst    -> get_stock_price + calculate_technical_indicators
+                                  + search_investment_knowledge (RAG)
+        * fundamental-analyst  -> get_fundamental_data
+                                  + get_sec_filing_summary (MCP) + search_investment_knowledge (RAG)
+        * news-sentiment       -> search_news + get_economic_indicators (MCP)
+                                  + search_market_history (RAG)
+        * portfolio-manager    -> calculate_portfolio_metrics + compare_stocks
+                                  + get_economic_indicators (MCP) + search_market_history (RAG)
     """
     model          = os.environ.get("AGENT_MODEL", "openai:gpt-4o")
     subagent_model = os.environ.get("SUBAGENT_MODEL", "openai:gpt-4o-mini")
     skills_dir     = str(Path(__file__).parent / "skills")
 
-    # ── Import individual skills ───────────────────────────────────────────────
+    # -- Import individual skills -----------------------------------------------
     from skills import (
         get_stock_price,
         calculate_technical_indicators,
@@ -313,7 +317,62 @@ async def build_agent(with_mcp: bool = False):
         calculate_portfolio_metrics,
     )
 
-    # ── Global tools (orchestrator + all sub-agents) ──────────────────────────
+    # -- Pre-build / load RAG vector indexes at startup -------------------------
+    await asyncio.get_event_loop().run_in_executor(None, preload_vectorstores)
+
+    # -- MCP-wrapped langchain tools (economic indicators + SEC filings) --------
+    from langchain_core.tools import tool as lc_tool
+
+    @lc_tool
+    def get_economic_indicators(indicators: str = "all") -> str:
+        """
+        Fetch live macroeconomic indicators: Fed funds rate, CPI inflation, GDP
+        growth rate, unemployment rate, and US Treasury yields (2Y / 10Y).
+        Also computes the 2Y-10Y yield curve spread as a recession signal.
+
+        Use this for any question about:
+        - Current interest rates or Fed monetary policy
+        - Inflation trends and CPI readings
+        - GDP growth rate or recession risk
+        - Treasury yields and yield curve shape
+        - Macro context needed for sector or stock analysis
+
+        Args:
+            indicators: Comma-separated list or 'all'.
+                        Options: fed_rate, cpi, gdp, unemployment, treasury_10y, treasury_2y
+        Returns:
+            JSON with current values and descriptions for each indicator.
+        """
+        import sys, json
+        sys.path.insert(0, str(Path(__file__).parent))
+        from mcp_server import _get_economic_indicators
+        return json.dumps(_get_economic_indicators(indicators), ensure_ascii=False, default=str)
+
+    @lc_tool
+    def get_sec_filing_summary(ticker: str, form_type: str = "10-K") -> str:
+        """
+        Retrieve the most recent SEC regulatory filing (10-K or 10-Q) for a
+        US-listed company via the free SEC EDGAR API. Returns filing dates,
+        accession numbers, and direct document URLs to the actual SEC filing.
+
+        Use this for:
+        - A company's latest annual or quarterly filing
+        - Risk factors in a 10-K (typically Item 1A)
+        - Filing dates and EDGAR accession numbers
+        - Links to official financial statements
+
+        Args:
+            ticker:    US stock ticker e.g. 'AAPL', 'TSLA', 'MSFT'
+            form_type: '10-K' (annual, default) or '10-Q' (quarterly)
+        Returns:
+            JSON with company name, CIK, filing dates, and document URLs.
+        """
+        import sys, json
+        sys.path.insert(0, str(Path(__file__).parent))
+        from mcp_server import _get_sec_filing_summary
+        return json.dumps(_get_sec_filing_summary(ticker, form_type), ensure_ascii=False, default=str)
+
+    # -- Global tools (orchestrator + all sub-agents) ---------------------------
     global_tools: list = [compare_stocks, screen_stocks]
 
     if os.environ.get("TAVILY_API_KEY"):
@@ -332,13 +391,18 @@ async def build_agent(with_mcp: bool = False):
         mcp_tools = await load_mcp_tools_async()
         global_tools.extend(mcp_tools)
 
-    # ── Skill-bound tool sets (per sub-agent) ─────────────────────────────────
-    technical_tools    = [get_stock_price, calculate_technical_indicators]
-    fundamental_tools  = [get_fundamental_data]
-    sentiment_tools    = [t for t in [search_news] if t is not None]
-    portfolio_tools    = [calculate_portfolio_metrics, compare_stocks]
 
-    # ── Sub-agent configs with targeted tool sets ─────────────────────────────
+    # -- Skill-bound tool sets (per sub-agent) ----------------------------------
+    technical_tools   = [get_stock_price, calculate_technical_indicators,
+                         search_investment_knowledge]
+    fundamental_tools = [get_fundamental_data, get_sec_filing_summary,
+                         search_investment_knowledge]
+    sentiment_tools   = ([search_news] if search_news else []) + [get_economic_indicators,
+                         search_market_history]
+    portfolio_tools   = [calculate_portfolio_metrics, compare_stocks,
+                         get_economic_indicators, search_market_history]
+
+    # -- Sub-agent configs with targeted tool sets ------------------------------
     subagents_config = [
         {
             **TECHNICAL_ANALYST_SUBAGENT,
@@ -366,7 +430,9 @@ async def build_agent(with_mcp: bool = False):
     orchestrator_tools = list({
         id(t): t for t in (
             [get_stock_price, calculate_technical_indicators,
-             get_fundamental_data, calculate_portfolio_metrics]
+             get_fundamental_data, calculate_portfolio_metrics,
+             get_economic_indicators, get_sec_filing_summary,
+             search_investment_knowledge, search_market_history]
             + global_tools
         )
     }.values())   # deduplicate by identity
@@ -409,12 +475,14 @@ def print_banner():
     console.print(Panel(banner.strip(), style="bold blue"))
     console.print()
     console.print("  [dim]Example queries:[/dim]")
-    console.print("  • Analyze AAPL with full technical and fundamental analysis")
-    console.print("  • Compare NVDA, AMD, and INTC over the past year")
-    console.print("  • Screen stocks with P/E < 20 from: AAPL,MSFT,GOOGL,META,AMZN")
-    console.print("  • Calculate portfolio metrics for AAPL 40%, MSFT 30%, GOOGL 30%")
-    console.print("  • What is the RSI and MACD for TSLA?")
-    console.print("  • Show me the market overview for today")
+    console.print("  * Analyze AAPL with full technical and fundamental analysis")
+    console.print("  * Compare NVDA, AMD, and INTC over the past year")
+    console.print("  * Screen stocks with P/E < 20 from: AAPL,MSFT,GOOGL,META,AMZN")
+    console.print("  * Calculate portfolio metrics for AAPL 40%, MSFT 30%, GOOGL 30%")
+    console.print("  * What are current Fed interest rates and CPI?  [MCP]")
+    console.print("  * Show me TSLA's latest 10-K SEC filing  [MCP]")
+    console.print("  * What caused the 2008 financial crisis?  [RAG]")
+    console.print("  * How should I use PEG ratio to evaluate growth stocks?  [RAG]")
     console.print()
     console.print("  Type [bold]quit[/bold] or [bold]exit[/bold] to quit.\n")
 
