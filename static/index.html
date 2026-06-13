@@ -498,6 +498,27 @@
     #send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
     #send-btn svg { width: 18px; height: 18px; }
 
+    #upload-btn {
+      flex-shrink: 0;
+      width: 38px; height: 38px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.2s var(--ease), background 0.2s var(--ease), color 0.2s var(--ease), transform 0.1s var(--ease);
+      margin-bottom: 2px;
+    }
+    #upload-btn:hover:not(:disabled) {
+      border-color: rgba(99,102,241,0.4);
+      background: rgba(99,102,241,0.08);
+      color: #a5b4fc;
+    }
+    #upload-btn:active:not(:disabled) { transform: scale(0.95); }
+    #upload-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    #upload-btn svg { width: 18px; height: 18px; }
+
     /* Spinner */
     .spinner {
       width: 16px; height: 16px;
@@ -728,6 +749,104 @@
     .md-content a { color: #60a5fa; text-decoration: none; }
     .md-content a:hover { text-decoration: underline; }
     .md-content hr { border: none; border-top: 1px solid var(--panel-border); margin: 14px 0; }
+
+    /* ─── Language Selection Modal ────────────────────────────────────── */
+    .lang-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(4, 6, 10, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      animation: modalFadeIn 0.3s var(--ease) forwards;
+    }
+    @keyframes modalFadeIn { to { opacity: 1; } }
+
+    .lang-modal {
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      padding: 30px;
+      width: 420px;
+      max-width: 90%;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      text-align: center;
+      transform: translateY(20px);
+      animation: modalSlideUp 0.35s var(--ease) forwards;
+    }
+    @keyframes modalSlideUp { to { transform: translateY(0); } }
+
+    .lang-modal-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #fff;
+    }
+
+    .lang-modal-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .lang-options {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .lang-btn {
+      flex: 1;
+      padding: 12px 20px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-primary);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .lang-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+    }
+
+    .lang-btn.zh-btn {
+      border-color: rgba(59, 130, 246, 0.3);
+      background: rgba(59, 130, 246, 0.05);
+    }
+    .lang-btn.zh-btn:hover {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: var(--skill);
+    }
+
+    .lang-btn.en-btn {
+      border-color: rgba(168, 85, 247, 0.3);
+      background: rgba(168, 85, 247, 0.05);
+    }
+    .lang-btn.en-btn:hover {
+      background: rgba(168, 85, 247, 0.12);
+      border-color: var(--rag);
+    }
+
+    .lang-btn-flag {
+      font-size: 24px;
+    }
   </style>
 </head>
 <body>
@@ -884,9 +1003,15 @@
       <!-- Input area -->
       <div id="input-area">
         <div class="input-wrapper">
+          <button id="upload-btn" title="Upload holdings CSV" onclick="triggerCSVUpload()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+            </svg>
+          </button>
+          <input type="file" id="csv-file-input" accept=".csv" style="display: none;" onchange="handleCSVSelected(event)">
           <textarea
             id="query-input"
-            placeholder="Ask about stocks, markets, economics…"
+            placeholder="Ask about stocks, markets, economics or upload CSV…"
             rows="1"
           ></textarea>
           <button id="send-btn" title="Send (Ctrl+Enter)">
@@ -1028,7 +1153,7 @@ function handleMessage(msg) {
     case 'tool_call': addToolCallItem(msg);                       break;
     case 'tool_done': completeToolCall(msg);                      break;
     case 'response':  addAIMessage(msg.content);                  break;
-    case 'done':      finishQuery(msg.elapsed, false, msg.history_count); break;
+    case 'done':      finishQuery(msg.elapsed, false, msg.history_count, msg.tokens); break;
     case 'error':     showError(msg.message);                     break;
   }
 }
@@ -1347,7 +1472,7 @@ function updateTrackerStats() {
 /* ═══════════════════════════════════════════════════════════════
    Finish Query
 ═══════════════════════════════════════════════════════════════ */
-function finishQuery(elapsed, isError, historyCount) {
+function finishQuery(elapsed, isError, historyCount, tokens) {
   isProcessing = false;
   setInputEnabled(true);
   removeThinking();
@@ -1357,12 +1482,12 @@ function finishQuery(elapsed, isError, historyCount) {
   if (!isError) {
     sessionStats.queries++;
     updateTrackerStats();
-    showStatsBar(elapsed);
+    showStatsBar(elapsed, tokens);
     if (historyCount != null) updateHistoryBadge(historyCount);
   }
 }
 
-function showStatsBar(elapsed) {
+function showStatsBar(elapsed, tokens) {
   const sb = document.getElementById('stats-bar');
   sb.innerHTML = '';
   sb.style.display = 'flex';
@@ -1390,6 +1515,21 @@ function showStatsBar(elapsed) {
     sb.appendChild(p3);
   }
 
+  // Tokens
+  if (tokens) {
+    const p4 = makeEl('div', 'stat-pill');
+    const input = tokens.input || 0;
+    const output = tokens.output || 0;
+    const cache = tokens.cache_read || 0;
+    const total = tokens.total || (input + output);
+
+    const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n;
+
+    let html = `📊 <span class="sp-val" title="Total Tokens">${fmt(total)}</span> tokens (in: ${fmt(input)}, cache: ${fmt(cache)}, out: ${fmt(output)})`;
+    p4.innerHTML = html;
+    sb.appendChild(p4);
+  }
+
   // Scroll to bottom
   const msgs = document.getElementById('messages');
   msgs.scrollTop = msgs.scrollHeight;
@@ -1409,8 +1549,10 @@ function fillQuery(text) {
 function setInputEnabled(enabled) {
   const input = document.getElementById('query-input');
   const btn   = document.getElementById('send-btn');
+  const uploadBtn = document.getElementById('upload-btn');
   input.disabled = !enabled;
   btn.disabled   = !enabled;
+  if (uploadBtn) uploadBtn.disabled = !enabled;
   if (!enabled) {
     btn.innerHTML = '<div class="spinner"></div>';
   } else {
@@ -1476,6 +1618,157 @@ function formatArgs(args, summary) {
       return `${k}=${val.length > 60 ? val.slice(0, 57) + '…' : val}`;
     })
     .join('  ·  ');
+}
+
+function triggerCSVUpload() {
+  if (isProcessing) return;
+  document.getElementById('csv-file-input').click();
+}
+
+function showLanguageSelectionModal(data, onSelect) {
+  // Create overlay
+  const overlay = makeEl('div', 'lang-modal-overlay');
+  
+  // Create modal container
+  const modal = makeEl('div', 'lang-modal');
+  
+  // Title
+  const title = makeEl('div', 'lang-modal-title');
+  title.textContent = '選擇分析報告語言 / Select Analysis Language';
+  
+  // Description
+  const desc = makeEl('div', 'lang-modal-desc');
+  desc.textContent = '持股 CSV 已上傳成功。請選擇您希望產生的投資組合分析報告語言。\nCSV uploaded successfully. Please choose the language for your portfolio analysis report.';
+  
+  // Options container
+  const opts = makeEl('div', 'lang-options');
+  
+  // Chinese button
+  const zhBtn = makeEl('button', 'lang-btn zh-btn');
+  const zhFlag = makeEl('span', 'lang-btn-flag');
+  zhFlag.textContent = '🇹🇼';
+  const zhText = document.createElement('span');
+  zhText.textContent = '繁體中文';
+  zhBtn.append(zhFlag, zhText);
+  zhBtn.onclick = () => {
+    overlay.remove();
+    onSelect('zh');
+  };
+  
+  // English button
+  const enBtn = makeEl('button', 'lang-btn en-btn');
+  const enFlag = makeEl('span', 'lang-btn-flag');
+  enFlag.textContent = '🇺🇸';
+  const enText = document.createElement('span');
+  enText.textContent = 'English';
+  enBtn.append(enFlag, enText);
+  enBtn.onclick = () => {
+    overlay.remove();
+    onSelect('en');
+  };
+  
+  opts.append(zhBtn, enBtn);
+  modal.append(title, desc, opts);
+  overlay.appendChild(modal);
+  
+  document.body.appendChild(overlay);
+}
+
+function handleCSVSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  if (!file.name.endsWith('.csv')) {
+    showError('Only CSV files are supported.');
+    event.target.value = '';
+    return;
+  }
+
+  isProcessing = true;
+  setInputEnabled(false);
+  showThinking();
+
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const sessionParam = currentSessionId ? `?session_id=${encodeURIComponent(currentSessionId)}` : '';
+
+  fetch(`/upload${sessionParam}`, {
+    method: 'POST',
+    body: formData
+  })
+  .then(response => {
+    if (!response.ok) {
+       return response.json().then(err => { throw new Error(err.error || 'Server error'); });
+    }
+    return response.json();
+  })
+  .then(data => {
+    removeThinking();
+    
+    // Add custom styled success banner in chat
+    const row = makeEl('div', 'msg-row system');
+    const card = makeEl('div', 'system-card');
+    card.style.background = 'rgba(16,185,129,0.12)';
+    card.style.border = '1px solid rgba(16,185,129,0.25)';
+    card.style.color = '#34d399';
+    card.style.padding = '12px 16px';
+    card.style.borderRadius = '12px';
+    card.style.fontSize = '13px';
+    card.style.marginTop = '10px';
+    card.style.marginBottom = '10px';
+    card.style.maxWidth = '80%';
+    card.style.animation = 'fadeInUp 0.3s var(--ease) forwards';
+    
+    const tickersStr = data.tickers_detected.length > 0 ? ` (${data.tickers_detected.join(', ')} ...)` : '';
+    card.innerHTML = `📁 <strong>持股 CSV 上傳成功:</strong> ${escapeHtml(data.filename)}<br><span style="color: #94a3b8; font-size:12px; display:inline-block; margin-top:4px;">偵測到 ${data.total_rows} 行持股資料${tickersStr}，已儲存於 ${escapeHtml(data.saved_path)}。</span>`;
+    row.appendChild(card);
+    appendMessage(row);
+
+    // Hide thinking indicator while user is selecting language in the modal
+    removeThinking();
+    setInputEnabled(true);
+
+    showLanguageSelectionModal(data, (lang) => {
+      isProcessing = true;
+      setInputEnabled(false);
+
+      const isChinese = (lang === 'zh');
+      let prompt = `I have uploaded my holdings CSV to: ${data.saved_path}. Please read this file, extract my holdings, and perform a complete portfolio analysis including Sharpe ratio, volatility, and technical/fundamental outlook for each stock.`;
+      if (isChinese) {
+        prompt = `我已將持股 CSV 檔案上傳至：${data.saved_path}。請讀取此檔案，提取我的持股資訊，並進行完整的投資組合分析，包含夏普值、波動率以及每檔股票的技術面與基本面展望。請以繁體中文回答。`;
+      }
+      
+      // Show request bubble
+      const userMsg = isChinese ? `分析我上傳的持股：${data.filename}` : `Analyze uploaded holdings: ${data.filename}`;
+      addUserMessage(userMsg);
+      
+      // Reset query stats & stream state
+      currentQuery.tools    = 0;
+      currentQuery.layers   = new Map();
+      currentQuery.startTime = Date.now();
+      currentStreamCard     = null;
+      currentStreamText     = '';
+
+      const sb = document.getElementById('stats-bar');
+      sb.style.display = 'none';
+      sb.innerHTML = '';
+
+      showThinking();
+      
+      // Send request via WebSocket
+      ws.send(JSON.stringify({ query: prompt }));
+    });
+  })
+  .catch(err => {
+    removeThinking();
+    showError(`上傳失敗: ${err.message}`);
+    setInputEnabled(true);
+    isProcessing = false;
+  })
+  .finally(() => {
+    event.target.value = '';
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════

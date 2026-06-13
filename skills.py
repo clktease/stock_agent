@@ -602,6 +602,160 @@ def calculate_portfolio_metrics(holdings: str, period: str = "1y") -> str:
         return json.dumps({"error": str(e)})
 
 
+@tool
+def read_holdings_csv(file_path: str) -> str:
+    """
+    Read a stock holdings CSV file from disk and return its parsed contents.
+    Use this tool to extract the list of stock tickers and their corresponding
+    weights, allocations, or shares from a user-uploaded CSV file.
+
+    Supports English and Traditional Chinese column names:
+      - Ticker       : ticker / symbol / stock / code / 代號 / 股票代號
+      - Weight / pct : weight / allocation / pct / 持倉佔比 / 佔比 / 比例
+      - Market value : market value / 市值  (derives weights if no explicit weight col)
+      - Shares       : shares / qty / quantity / 數量 / 股數
+
+    Args:
+        file_path: Absolute or relative path to the CSV file on disk.
+
+    Returns:
+        JSON string containing the parsed list of positions with keys 'ticker',
+        'weight', 'shares' (if present), or an error message.
+    """
+    try:
+        import os
+        import pandas as pd
+
+        if not os.path.exists(file_path):
+            return json.dumps({"error": f"File not found: {file_path}"})
+
+        df = pd.read_csv(file_path)
+        if df.empty:
+            return json.dumps({"error": "The uploaded CSV file is empty."})
+
+        # Build mapping: stripped-original-name -> original column label
+        col_map = {str(c).strip(): c for c in df.columns}
+
+        # ── Column keyword sets ────────────────────────────────────────────────
+        TICKER_EXACT = {
+            "ticker", "symbol", "stock", "code", "shares symbol",
+            "instrument", "代號", "股票代碼", "股票代號", "標的",
+        }
+        WEIGHT_EXACT = {
+            "weight", "allocation", "percentage", "pct", "ratio", "proportion",
+            "持倉佔比", "佔比", "比例", "配置", "权重",
+        }
+        MV_EXACT = {
+            "市值", "market value", "market_value", "mv", "市場價值",
+        }
+        SHARES_EXACT = {
+            "shares", "qty", "quantity", "amount", "units",
+            "數量", "股數", "持股數",
+        }
+
+        def _find_col(exact_set, partial_kws):
+            # 1) exact match (case-insensitive)
+            for name, orig in col_map.items():
+                if name in exact_set or name.lower() in exact_set:
+                    return orig
+            # 2) partial match
+            for name, orig in col_map.items():
+                if any(kw in name.lower() for kw in partial_kws):
+                    return orig
+            return None
+
+        ticker_col = _find_col(TICKER_EXACT, ("ticker", "symbol", "stock", "代號", "股票"))
+        if not ticker_col:
+            ticker_col = df.columns[0]   # absolute fallback
+
+        weight_col = _find_col(WEIGHT_EXACT, ("weight", "allocation", "pct", "percent", "佔比", "比例"))
+        mv_col     = _find_col(MV_EXACT,     ("市值", "market", "mv"))
+        shares_col = _find_col(SHARES_EXACT, ("share", "qty", "quant", "unit", "數量", "股數"))
+
+        # ── Helper: parse pct string → decimal (0-1) ───────────────────────────
+        def to_decimal_weight(val) -> Optional[float]:
+            if val is None:
+                return None
+            has_pct = "%" in str(val)
+            s = str(val).replace("%", "").replace(",", "").strip()
+            try:
+                f = float(s)
+                if has_pct or f > 1.0:
+                    return round(f / 100.0, 6)
+                return round(f, 6)
+            except (ValueError, TypeError):
+                return None
+
+        # ── Extract raw positions ──────────────────────────────────────────────
+        positions = []
+        for _, row in df.iterrows():
+            ticker_val = str(row[ticker_col]).strip().upper()
+            if not ticker_val or ticker_val in ("TICKER", "SYMBOL", "STOCK", "NAN", "", "代號"):
+                continue
+
+            pos: dict = {"ticker": ticker_val}
+
+            if shares_col is not None:
+                f_val = _safe_float(str(row[shares_col]).replace(",", ""))
+                if f_val is not None:
+                    pos["shares"] = f_val
+
+            if mv_col is not None:
+                f_val = _safe_float(str(row[mv_col]).replace(",", ""))
+                if f_val is not None:
+                    pos["_mv"] = f_val          # internal; removed after weight derivation
+
+            if weight_col is not None:
+                w = to_decimal_weight(row[weight_col])
+                if w is not None:
+                    pos["weight"] = w
+
+            positions.append(pos)
+
+        # ── Derive weights if not explicitly available ─────────────────────────
+        all_have_weight = all("weight" in p for p in positions)
+        weight_source = "explicit allocation column"
+
+        if not all_have_weight:
+            mv_positions = [p for p in positions if "_mv" in p]
+            if mv_positions:
+                total_mv = sum(p["_mv"] for p in mv_positions)
+                if total_mv > 0:
+                    for p in mv_positions:
+                        p["weight"] = round(p["_mv"] / total_mv, 6)
+                weight_source = "市值 (market value) — derived"
+            else:
+                eq_w = round(1.0 / len(positions), 6)
+                for p in positions:
+                    p["weight"] = eq_w
+                weight_source = "equal weight (fallback — no weight/市值 column found)"
+
+        # Remove internal key
+        for p in positions:
+            p.pop("_mv", None)
+
+        # ── Normalise weights to sum = 1.0 ─────────────────────────────────────
+        total_w = sum(p.get("weight", 0) for p in positions)
+        if total_w > 0 and abs(total_w - 1.0) > 0.01:
+            for p in positions:
+                if "weight" in p:
+                    p["weight"] = round(p["weight"] / total_w, 6)
+
+        return json.dumps({
+            "file_path": file_path,
+            "columns_detected": {
+                "ticker":       str(ticker_col),
+                "weight":       str(weight_col) if weight_col else None,
+                "market_value": str(mv_col)     if mv_col     else None,
+                "shares":       str(shares_col) if shares_col else None,
+            },
+            "weight_source": weight_source,
+            "holdings": positions,
+        }, ensure_ascii=False, default=str)
+    except Exception as e:
+        return json.dumps({"error": f"Failed to parse CSV: {str(e)}"})
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Export all skills
 # ─────────────────────────────────────────────────────────────────────────────
@@ -613,4 +767,5 @@ ALL_SKILLS = [
     screen_stocks,
     compare_stocks,
     calculate_portfolio_metrics,
+    read_holdings_csv,
 ]

@@ -49,10 +49,172 @@ from rag_tools import RAG_TOOLS, preload_vectorstores, search_investment_knowled
 console = Console()
 
 
+class TokenUsageAccumulator:
+    """Thread-safe accumulator for token usage across an agent invocation."""
+    def __init__(self):
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
+        self.cache_read_tokens: int = 0
+        self.cache_creation_tokens: int = 0
+        self.llm_calls: int = 0
+
+    def add(self, input_tokens: int = 0, output_tokens: int = 0,
+            cache_read: int = 0, cache_creation: int = 0):
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
+        self.cache_read_tokens += cache_read
+        self.cache_creation_tokens += cache_creation
+        self.llm_calls += 1
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+# Global session-level accumulator (resets each interactive turn)
+_session_tokens = TokenUsageAccumulator()
+
+
+def _extract_token_counts(response_metadata: dict) -> dict:
+    """
+    Extract token counts from LangChain response_metadata.
+    Supports OpenAI, Anthropic, and Google Gemini formats.
+    """
+    counts = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+
+    if not response_metadata:
+        return counts
+
+    # ── Anthropic ──────────────────────────────────────────────────────────────
+    usage = response_metadata.get("usage", {})
+    if usage:
+        counts["input"]          = usage.get("input_tokens", 0)
+        counts["output"]         = usage.get("output_tokens", 0)
+        counts["cache_read"]     = usage.get("cache_read_input_tokens", 0)
+        counts["cache_creation"] = usage.get("cache_creation_input_tokens", 0)
+        if any(counts.values()):
+            return counts
+
+    # ── OpenAI ─────────────────────────────────────────────────────────────────
+    token_usage = response_metadata.get("token_usage", {})
+    if token_usage:
+        counts["input"]      = token_usage.get("prompt_tokens", 0)
+        counts["output"]     = token_usage.get("completion_tokens", 0)
+        # OpenAI prompt_tokens_details for cached tokens
+        details = token_usage.get("prompt_tokens_details") or {}
+        counts["cache_read"] = details.get("cached_tokens", 0)
+        if any(counts.values()):
+            return counts
+
+    # ── Google Gemini ──────────────────────────────────────────────────────────
+    counts["input"]  = response_metadata.get("prompt_token_count", 0)
+    counts["output"] = response_metadata.get("candidates_token_count", 0)
+    counts["cache_read"] = response_metadata.get("cached_content_token_count", 0)
+
+    return counts
+
+
 class AgentExecutionTracker(AsyncCallbackHandler):
-    def __init__(self, console):
+    def __init__(self, console, accumulator: "TokenUsageAccumulator | None" = None):
         super().__init__()
         self.console = console
+        self.accumulator = accumulator  # optional per-invocation accumulator
+
+    # ── Token tracking callbacks ───────────────────────────────────────────────
+
+    async def on_llm_end(self, response, *, run_id, parent_run_id=None, **kwargs) -> None:
+        """Called after every LLM call (non-streaming or streaming finish)."""
+        try:
+            # LLMResult → generations[0][0].generation_info or response.llm_output
+            llm_output = getattr(response, "llm_output", {}) or {}
+            metadata = llm_output.get("token_usage") or llm_output.get("usage") or {}
+
+            combined = {}
+            if hasattr(response, "generations") and response.generations:
+                gen0 = response.generations[0]
+                if gen0:
+                    g = gen0[0]
+                    msg_obj = getattr(g, "message", None)
+                    if msg_obj:
+                        resp_meta = getattr(msg_obj, "response_metadata", None) or {}
+                        combined.update(resp_meta)
+                        usage_meta = getattr(msg_obj, "usage_metadata", None) or {}
+                        if usage_meta:
+                            combined["usage"] = {
+                                "input_tokens":  usage_meta.get("input_tokens", 0),
+                                "output_tokens": usage_meta.get("output_tokens", 0),
+                                "cache_read_input_tokens":     usage_meta.get("input_token_details", {}).get("cache_read", 0),
+                                "cache_creation_input_tokens": usage_meta.get("input_token_details", {}).get("cache_creation", 0),
+                            }
+                    else:
+                        gen_meta = getattr(g, "generation_info", None) or {}
+                        if isinstance(gen_meta, dict):
+                            combined.update(gen_meta)
+
+            combined.update(llm_output)
+            if metadata:
+                combined["token_usage"] = metadata
+
+            counts = _extract_token_counts(combined)
+            self._print_and_accumulate(counts)
+        except Exception:
+            pass  # never break the agent on token-tracking errors
+
+    async def on_chat_model_end(self, response, *, run_id, parent_run_id=None, **kwargs) -> None:
+        """Called after every chat model call – preferred path for most providers."""
+        try:
+            meta = {}
+            if hasattr(response, "generations") and response.generations:
+                gen0 = response.generations[0]
+                if gen0:
+                    msg = getattr(gen0[0], "message", None)
+                    if msg:
+                        meta = getattr(msg, "response_metadata", None) or {}
+                        usage_meta = getattr(msg, "usage_metadata", None) or {}
+                        if usage_meta:
+                            meta["usage"] = {
+                                "input_tokens":  usage_meta.get("input_tokens", 0),
+                                "output_tokens": usage_meta.get("output_tokens", 0),
+                                "cache_read_input_tokens":     usage_meta.get("input_token_details", {}).get("cache_read", 0),
+                                "cache_creation_input_tokens": usage_meta.get("input_token_details", {}).get("cache_creation", 0),
+                            }
+            if not meta:
+                llm_output = getattr(response, "llm_output", {}) or {}
+                meta = llm_output
+            counts = _extract_token_counts(meta)
+            self._print_and_accumulate(counts)
+        except Exception:
+            pass
+
+    def _print_and_accumulate(self, counts: dict) -> None:
+        """Print per-call token stats and accumulate into session totals."""
+        inp   = counts["input"]
+        out   = counts["output"]
+        cache = counts["cache_read"]
+        ccr   = counts["cache_creation"]
+
+        if inp == 0 and out == 0:
+            return  # no meaningful data – skip
+
+        parts = [
+            f"[cyan]input={inp:,}[/cyan]",
+            f"[green]output={out:,}[/green]",
+        ]
+        if cache:
+            parts.append(f"[yellow]cache_read={cache:,}[/yellow]")
+        if ccr:
+            parts.append(f"[dim]cache_write={ccr:,}[/dim]")
+
+        self.console.print(
+            f"\n[dim]📊 Tokens:[/dim] " + "  ".join(parts)
+        )
+
+        # Accumulate
+        if self.accumulator is not None:
+            self.accumulator.add(inp, out, cache, ccr)
+        _session_tokens.add(inp, out, cache, ccr)
+
+    # ── Tool tracking callbacks (unchanged) ───────────────────────────────────
 
     async def on_tool_start(
         self,
@@ -131,7 +293,8 @@ TECHNICAL_ANALYST_SUBAGENT = {
         "3. Use MACD for trend confirmation and divergence signals.\n"
         "4. Use Bollinger Bands to assess volatility and potential mean-reversion.\n"
         "5. Conclude with a clear technical outlook: Bullish / Bearish / Neutral and key levels.\n"
-        "Be precise with numbers. Always state your confidence level."
+        "Be precise with numbers. Always state your confidence level.\n"
+        "6. Always respond in the same language as the incoming query/instruction (e.g. if the user asks or delegates in Traditional Chinese, reply in Traditional Chinese)."
     ),
 }
 
@@ -151,7 +314,8 @@ FUNDAMENTAL_ANALYST_SUBAGENT = {
         "3. Check growth trajectory: Revenue and earnings growth rates.\n"
         "4. Review balance sheet health: Debt levels, cash flow generation.\n"
         "5. Provide a fundamental rating: Undervalued / Fair Value / Overvalued with reasoning.\n"
-        "Always provide context about the company's industry and competitive position."
+        "Always provide context about the company's industry and competitive position.\n"
+        "6. Always respond in the same language as the incoming query/instruction (e.g. if the user asks or delegates in Traditional Chinese, reply in Traditional Chinese)."
     ),
 }
 
@@ -171,7 +335,8 @@ NEWS_SENTIMENT_SUBAGENT = {
         "3. Assess overall market sentiment: Bullish / Bearish / Mixed.\n"
         "4. Highlight any risks or red flags mentioned in recent news.\n"
         "5. Summarize your findings in a concise market intelligence report.\n"
-        "Focus on facts. Distinguish between confirmed news and speculation."
+        "Focus on facts. Distinguish between confirmed news and speculation.\n"
+        "6. Always respond in the same language as the incoming query/instruction (e.g. if the user asks or delegates in Traditional Chinese, reply in Traditional Chinese)."
     ),
 }
 
@@ -190,7 +355,8 @@ PORTFOLIO_MANAGER_SUBAGENT = {
         "3. Suggest optimal position sizing and diversification strategies.\n"
         "4. Identify concentration risks and correlation issues.\n"
         "5. Provide a clear portfolio recommendation with entry/exit levels.\n"
-        "Always consider both upside potential and downside risk. Think in terms of risk-adjusted returns."
+        "Always consider both upside potential and downside risk. Think in terms of risk-adjusted returns.\n"
+        "6. Always respond in the same language as the incoming query/instruction (e.g. if the user asks or delegates in Traditional Chinese, reply in Traditional Chinese)."
     ),
 }
 
@@ -246,6 +412,10 @@ Always structure comprehensive analyses as:
 - **Key Risks**: ...
 - **Key Catalysts**: ...
 ```
+
+## Language Consistency (CRITICAL)
+- You MUST respond in the same language as the user's input/query. If the user asks in Traditional Chinese (繁體中文), your entire response, including all headers, tables, analyses, summaries, and recommendations, must be in Traditional Chinese.
+- Delegate tasks to sub-agents in the same language as the user's query if possible, and translate any insights, terminology, or data retrieved from tools or sub-agents (e.g. English text) into the user's query language in the final report.
 
 ## Important Notes
 - Always cite specific numbers and data.
@@ -321,6 +491,7 @@ async def build_agent(with_mcp: bool = False):
         screen_stocks,
         compare_stocks,
         calculate_portfolio_metrics,
+        read_holdings_csv,
     )
 
     # -- Pre-build / load RAG vector indexes at startup -------------------------
@@ -406,7 +577,8 @@ async def build_agent(with_mcp: bool = False):
     sentiment_tools   = ([search_news] if search_news else []) + [get_economic_indicators,
                          search_market_history]
     portfolio_tools   = [calculate_portfolio_metrics, compare_stocks,
-                         get_economic_indicators, search_market_history]
+                         get_economic_indicators, search_market_history,
+                         read_holdings_csv]
 
     # -- Sub-agent configs with targeted tool sets ------------------------------
     subagents_config = [
@@ -438,7 +610,8 @@ async def build_agent(with_mcp: bool = False):
             [get_stock_price, calculate_technical_indicators,
              get_fundamental_data, calculate_portfolio_metrics,
              get_economic_indicators, get_sec_filing_summary,
-             search_investment_knowledge, search_market_history]
+             search_investment_knowledge, search_market_history,
+             read_holdings_csv]
             + global_tools
         )
     }.values())   # deduplicate by identity
@@ -522,13 +695,14 @@ def _get_message_content_str(message) -> str:
     return str(content)
 
 
-async def run_query(agent, query: str) -> str:
+async def run_query(agent, query: str) -> tuple[str, TokenUsageAccumulator]:
     """Run a single query through the agent."""
     console.print(Rule(f"[bold]🔍 Analyzing: {query[:60]}{'…' if len(query) > 60 else ''}"))
+    turn_acc = TokenUsageAccumulator()
     with console.status("[bold cyan]Agent thinking…[/bold cyan]", spinner="dots"):
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": query}]},
-            config={"callbacks": [AgentExecutionTracker(console)]}
+            config={"callbacks": [AgentExecutionTracker(console, accumulator=turn_acc)]}
         )
 
     # Extract final message content
@@ -538,7 +712,29 @@ async def run_query(agent, query: str) -> str:
     else:
         content = str(result)
 
-    return content
+    return content, turn_acc
+
+
+def _print_token_summary(acc: "TokenUsageAccumulator", label: str = "Turn") -> None:
+    """Print a formatted token-usage summary box."""
+    if acc.llm_calls == 0:
+        return
+    lines = [
+        f"  [bold]LLM calls :[/bold] {acc.llm_calls}",
+        f"  [bold cyan]Input     :[/bold cyan] {acc.input_tokens:,} tokens",
+        f"  [bold green]Output    :[/bold green] {acc.output_tokens:,} tokens",
+    ]
+    if acc.cache_read_tokens:
+        lines.append(f"  [bold yellow]Cache read:[/bold yellow] {acc.cache_read_tokens:,} tokens")
+    if acc.cache_creation_tokens:
+        lines.append(f"  [dim]Cache write: {acc.cache_creation_tokens:,} tokens[/dim]")
+    lines.append(f"  [bold]Total     :[/bold] {acc.total_tokens:,} tokens")
+    console.print(
+        Panel("\n".join(lines),
+              title=f"[bold white]📊 Token Usage – {label}[/bold white]",
+              border_style="blue",
+              padding=(0, 1))
+    )
 
 
 async def interactive_mode(agent):
@@ -550,10 +746,12 @@ async def interactive_mode(agent):
         try:
             query = Prompt.ask("\n[bold cyan]You[/bold cyan]")
         except (KeyboardInterrupt, EOFError):
+            _print_token_summary(_session_tokens, label="Session Total")
             console.print("\n[dim]Goodbye! 👋[/dim]")
             break
 
         if query.strip().lower() in ("quit", "exit", "q", "bye"):
+            _print_token_summary(_session_tokens, label="Session Total")
             console.print("\n[dim]Goodbye! 👋[/dim]")
             break
 
@@ -563,10 +761,11 @@ async def interactive_mode(agent):
         history.append({"role": "user", "content": query})
 
         try:
+            turn_acc = TokenUsageAccumulator()
             with console.status("[bold cyan]🤖 Agent is working…[/bold cyan]", spinner="dots2"):
                 result = await agent.ainvoke(
                     {"messages": history},
-                    config={"callbacks": [AgentExecutionTracker(console)]}
+                    config={"callbacks": [AgentExecutionTracker(console, accumulator=turn_acc)]}
                 )
 
             messages = result.get("messages", [])
@@ -578,6 +777,9 @@ async def interactive_mode(agent):
 
             console.print()
             console.print(Panel(Markdown(response), title="[bold green]📊 Analysis[/bold green]", border_style="green"))
+
+            # ── Per-turn token summary ──────────────────────────────────────
+            _print_token_summary(turn_acc, label="This Request")
 
         except Exception as e:
             console.print(f"\n[red]❌ Error: {e}[/red]")
@@ -624,9 +826,10 @@ Examples:
 
     if args.query:
         # Single-query mode
-        response = await run_query(agent, args.query)
+        response, turn_acc = await run_query(agent, args.query)
         console.print()
         console.print(Panel(Markdown(response), title="[bold green]📊 Analysis[/bold green]", border_style="green"))
+        _print_token_summary(turn_acc, label="This request")
     else:
         # Interactive mode
         await interactive_mode(agent)

@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any, List, Tuple
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.callbacks import AsyncCallbackHandler
 
@@ -181,6 +181,8 @@ class WebSocketCallbackHandler(AsyncCallbackHandler):
         self.ws = ws
         self._run_start: dict[str, float] = {}
         self._tool_descendants: set[str] = set()
+        from agent import TokenUsageAccumulator
+        self.accumulator = TokenUsageAccumulator()
 
     async def _send(self, payload: dict) -> None:
         try:
@@ -292,6 +294,82 @@ class WebSocketCallbackHandler(AsyncCallbackHandler):
         elapsed_ms = round((time.time() - t0) * 1000) if t0 else 0
         await self._send({"type": "tool_done", "run_id": rid, "elapsed_ms": elapsed_ms})
 
+    async def on_llm_end(self, response, *, run_id, parent_run_id=None, **kwargs) -> None:
+        try:
+            llm_output = getattr(response, "llm_output", {}) or {}
+            metadata = llm_output.get("token_usage") or llm_output.get("usage") or {}
+            
+            combined = {}
+            if hasattr(response, "generations") and response.generations:
+                gen0 = response.generations[0]
+                if gen0:
+                    g = gen0[0]
+                    msg_obj = getattr(g, "message", None)
+                    if msg_obj:
+                        resp_meta = getattr(msg_obj, "response_metadata", None) or {}
+                        combined.update(resp_meta)
+                        usage_meta = getattr(msg_obj, "usage_metadata", None) or {}
+                        if usage_meta:
+                            combined["usage"] = {
+                                "input_tokens":  usage_meta.get("input_tokens", 0),
+                                "output_tokens": usage_meta.get("output_tokens", 0),
+                                "cache_read_input_tokens":     usage_meta.get("input_token_details", {}).get("cache_read", 0),
+                                "cache_creation_input_tokens": usage_meta.get("input_token_details", {}).get("cache_creation", 0),
+                            }
+                    else:
+                        gen_meta = getattr(g, "generation_info", None) or {}
+                        if isinstance(gen_meta, dict):
+                            combined.update(gen_meta)
+            
+            combined.update(llm_output)
+            if metadata:
+                combined["token_usage"] = metadata
+
+            from agent import _extract_token_counts
+            counts = _extract_token_counts(combined)
+            inp = counts["input"]
+            out = counts["output"]
+            cache = counts["cache_read"]
+            ccr = counts["cache_creation"]
+            if inp > 0 or out > 0:
+                self.accumulator.add(inp, out, cache, ccr)
+                print(f"[Tokens] Call input={inp}, output={out}, cache={cache} | Acc input={self.accumulator.input_tokens}, output={self.accumulator.output_tokens}")
+        except Exception:
+            pass
+
+    async def on_chat_model_end(self, response, *, run_id, parent_run_id=None, **kwargs) -> None:
+        try:
+            meta = {}
+            if hasattr(response, "generations") and response.generations:
+                gen0 = response.generations[0]
+                if gen0:
+                    msg = getattr(gen0[0], "message", None)
+                    if msg:
+                        meta = getattr(msg, "response_metadata", None) or {}
+                        usage_meta = getattr(msg, "usage_metadata", None) or {}
+                        if usage_meta:
+                            meta["usage"] = {
+                                "input_tokens":  usage_meta.get("input_tokens", 0),
+                                "output_tokens": usage_meta.get("output_tokens", 0),
+                                "cache_read_input_tokens":     usage_meta.get("input_token_details", {}).get("cache_read", 0),
+                                "cache_creation_input_tokens": usage_meta.get("input_token_details", {}).get("cache_creation", 0),
+                            }
+            if not meta:
+                llm_output = getattr(response, "llm_output", {}) or {}
+                meta = llm_output
+            
+            from agent import _extract_token_counts
+            counts = _extract_token_counts(meta)
+            inp = counts["input"]
+            out = counts["output"]
+            cache = counts["cache_read"]
+            ccr = counts["cache_creation"]
+            if inp > 0 or out > 0:
+                self.accumulator.add(inp, out, cache, ccr)
+                print(f"[Tokens] Chat input={inp}, output={out}, cache={cache} | Acc input={self.accumulator.input_tokens}, output={self.accumulator.output_tokens}")
+        except Exception:
+            pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent Singleton (built once on startup)
@@ -346,6 +424,54 @@ async def index():
 @app.get("/health")
 async def health():
     return {"status": "ok", "agent_ready": _agent is not None}
+
+
+_uploads_dir = Path(__file__).parent / "uploads"
+_uploads_dir.mkdir(exist_ok=True)
+
+
+@app.post("/upload")
+async def upload_holdings(file: UploadFile = File(...), session_id: str = "default"):
+    if not file.filename.endswith(".csv"):
+        return JSONResponse(status_code=400, content={"error": "Only CSV files are supported."})
+    
+    try:
+        filename = f"holdings_{session_id}.csv"
+        file_path = _uploads_dir / filename
+        
+        # Save file bytes
+        content = await file.read()
+        file_path.write_bytes(content)
+        
+        # Verify parser
+        import pandas as pd
+        df = pd.read_csv(file_path)
+        tickers = []
+        if not df.empty:
+            cols_lower = [str(c).strip().lower() for c in df.columns]
+            ticker_col = None
+            for idx, col in enumerate(cols_lower):
+                if col in ("ticker", "symbol", "stock", "code", "shares symbol", "instrument"):
+                    ticker_col = df.columns[idx]
+                    break
+            if not ticker_col:
+                for idx, col in enumerate(cols_lower):
+                    if "ticker" in col or "symbol" in col or "stock" in col:
+                        ticker_col = df.columns[idx]
+                        break
+            if not ticker_col:
+                ticker_col = df.columns[0]
+            tickers = [str(t).strip().upper() for t in df[ticker_col].dropna().unique() if str(t).strip() and str(t).strip().upper() not in ("TICKER", "SYMBOL", "STOCK", "NAN", "")]
+            
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "saved_path": f"uploads/{filename}",
+            "tickers_detected": tickers[:8],
+            "total_rows": len(df) if not df.empty else 0
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to save and parse CSV file: {str(e)}"})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -415,17 +541,44 @@ async def ws_endpoint(ws: WebSocket):
                 session_manager.add_exchange(session.session_id, query, response_text)
                 history_count = len(session_manager.get_messages(session.session_id)) // 2
 
+                # Print token summary to server console
+                from agent import _print_token_summary
+                _print_token_summary(callback.accumulator, label="Web Request")
+
+                tokens_data = {
+                    "input": callback.accumulator.input_tokens,
+                    "output": callback.accumulator.output_tokens,
+                    "cache_read": callback.accumulator.cache_read_tokens,
+                    "cache_creation": callback.accumulator.cache_creation_tokens,
+                    "total": callback.accumulator.total_tokens
+                }
+
                 await ws.send_json({"type": "response", "content": response_text})
                 await ws.send_json({
                     "type": "done",
                     "elapsed": elapsed,
                     "history_count": history_count,
+                    "tokens": tokens_data,
                 })
 
             except Exception as e:
                 elapsed = round(time.time() - t_start, 2)
+                from agent import _print_token_summary
+                _print_token_summary(callback.accumulator, label="Web Request (Failed)")
+                tokens_data = {
+                    "input": callback.accumulator.input_tokens,
+                    "output": callback.accumulator.output_tokens,
+                    "cache_read": callback.accumulator.cache_read_tokens,
+                    "cache_creation": callback.accumulator.cache_creation_tokens,
+                    "total": callback.accumulator.total_tokens
+                }
                 await ws.send_json({"type": "error", "message": str(e)})
-                await ws.send_json({"type": "done", "elapsed": elapsed, "history_count": 0})
+                await ws.send_json({
+                    "type": "done",
+                    "elapsed": elapsed,
+                    "history_count": 0,
+                    "tokens": tokens_data,
+                })
 
     except WebSocketDisconnect:
         pass

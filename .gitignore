@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local configuration / environment variables
+.env
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+
+# User uploads and temporary files
+uploads/*
+!uploads/.gitkeep
+test_holdings.csv
+test_real_holdings.csv
