@@ -421,6 +421,7 @@ Always structure comprehensive analyses as:
 - Always cite specific numbers and data.
 - Distinguish between facts and forward-looking estimates.
 - This is for educational purposes – not personalized financial advice.
+- Use the `ask_clarification` tool to ask for clarification when a query is ambiguous, e.g. when the user asks to analyze the "stock market" (分析股市) but does not specify whether they want US stocks (美股), Taiwan stocks (台股), or Korean stocks (韓股).
 - If a ticker is not found, suggest alternatives or ask for clarification.
 """
 
@@ -449,9 +450,30 @@ async def load_mcp_tools_async():
         return []
 
 
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import MemorySaver
+
+@tool
+def ask_clarification(question: str, options: list[str]) -> str:
+    """
+    Ask the user a clarifying question when the query is ambiguous or needs user input/choice.
+    Use this tool to ask for clarification, e.g. when the user asks to analyze 'stock market'
+    but doesn't specify which market (e.g., US stocks, Taiwan stocks, Korean stocks), or when
+    multiple choices are possible.
+    
+    Args:
+        question: The question to display to the user.
+        options: A list of options for the user to choose from.
+    Returns:
+        The option selected by the user.
+    """
+    return "This return value is a placeholder; it will be overwritten by human response."
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent Factory
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 async def build_agent(with_mcp: bool = False):
     """Build and return the Deep Agent instance with tiered tool architecture.
@@ -550,7 +572,7 @@ async def build_agent(with_mcp: bool = False):
         return json.dumps(_get_sec_filing_summary(ticker, form_type), ensure_ascii=False, default=str)
 
     # -- Global tools (orchestrator + all sub-agents) ---------------------------
-    global_tools: list = [compare_stocks, screen_stocks]
+    global_tools: list = [compare_stocks, screen_stocks, ask_clarification]
 
     if os.environ.get("TAVILY_API_KEY"):
         try:
@@ -616,12 +638,16 @@ async def build_agent(with_mcp: bool = False):
         )
     }.values())   # deduplicate by identity
 
+    checkpointer = MemorySaver()
+
     agent = create_deep_agent(
         model=model,
         tools=orchestrator_tools,
         skills=skills_dir,           # loads all SKILL.md files into system prompt
         system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
         subagents=subagents_config,
+        checkpointer=checkpointer,
+        interrupt_on={"ask_clarification": True},
     )
 
     console.print(f"[green]✓ Deep Agent ready (model: {model})[/green]")

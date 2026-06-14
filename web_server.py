@@ -25,6 +25,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.callbacks import AsyncCallbackHandler
+from langgraph.errors import GraphInterrupt
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -521,18 +522,77 @@ async def ws_endpoint(ws: WebSocket):
 
             await ws.send_json({"type": "thinking"})
 
-            # Build message list: history + new human message
-            history = session_manager.get_messages(session.session_id)
-            messages = history + [("human", query)]
-
             callback = WebSocketCallbackHandler(ws)
             t_start = time.time()
 
+            config = {
+                "configurable": {"thread_id": f"{session.session_id}_{session.created_at}"},
+                "callbacks": [callback],
+                "recursion_limit": 100
+            }
+
             try:
-                result = await agent.ainvoke(
-                    {"messages": messages},
-                    config={"callbacks": [callback], "recursion_limit": 100},
-                )
+                run_input = {"messages": [("human", query)]}
+                while True:
+                    interrupted = False
+                    hitl_req = None
+                    result = None
+                    
+                    try:
+                        result = await agent.ainvoke(
+                            run_input,
+                            config=config,
+                        )
+                        if isinstance(result, dict) and result.get("__interrupt__"):
+                            interrupted = True
+                            hitl_req = result["__interrupt__"][0].value
+                    except GraphInterrupt as e:
+                        interrupted = True
+                        state = await agent.aget_state(config)
+                        tasks = state.tasks
+                        if tasks and tasks[0].interrupts:
+                            hitl_req = tasks[0].interrupts[0].value
+                    
+                    if interrupted and hitl_req:
+                        action_request = next(
+                            (req for req in hitl_req.get("action_requests", []) if req.get("name") == "ask_clarification"),
+                            None
+                        )
+                        if action_request:
+                            args = action_request.get("args", {})
+                            question = args.get("question", "請確認：")
+                            options = args.get("options", [])
+                            
+                            await ws.send_json({
+                                "type": "clarify",
+                                "question": question,
+                                "options": options
+                            })
+                            
+                            # Wait for frontend's resume response
+                            while True:
+                                try:
+                                    msg_data = await ws.receive_json()
+                                except WebSocketDisconnect:
+                                    raise
+                                
+                                if msg_data.get("type") == "resume":
+                                    choice = msg_data.get("choice")
+                                    from langgraph.types import Command
+                                    run_input = Command(resume={"decisions": [{"type": "respond", "message": choice}]})
+                                    break
+                                elif msg_data.get("type") == "new_session":
+                                    session = session_manager.reset(session.session_id)
+                                    await ws.send_json({
+                                        "type": "session",
+                                        "session_id": session.session_id,
+                                        "history_count": 0,
+                                    })
+                                    raise Exception("Session reset during clarification.")
+                            continue
+                    
+                    # If not interrupted, break the execution loop
+                    break
 
                 response_text = _extract_response(result)
                 elapsed = round(time.time() - t_start, 2)

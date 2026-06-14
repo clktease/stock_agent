@@ -847,6 +847,50 @@
     .lang-btn-flag {
       font-size: 24px;
     }
+
+    /* ─── Clarify Card (Human-in-the-Loop) ────────────────────────── */
+    .clarify-card {
+      background: rgba(99, 102, 241, 0.05) !important;
+      border-color: rgba(99, 102, 241, 0.2) !important;
+      box-shadow: 0 4px 24px rgba(99, 102, 241, 0.06);
+      animation: fadeInUp 0.35s var(--ease) forwards;
+    }
+    .clarify-question {
+      font-weight: 600;
+      color: #a5b4fc;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+    .clarify-options {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    .clarify-btn {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #e2e8f0;
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s var(--ease);
+    }
+    .clarify-btn:hover:not(:disabled) {
+      border-color: rgba(99, 102, 241, 0.5);
+      background: rgba(99, 102, 241, 0.1);
+      color: #a5b4fc;
+      transform: translateY(-1px);
+    }
+    .clarify-btn:active:not(:disabled) {
+      transform: translateY(0) scale(0.97);
+    }
+    .clarify-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -1152,6 +1196,7 @@ function handleMessage(msg) {
     case 'token':     onToken(msg.content);                        break;
     case 'tool_call': addToolCallItem(msg);                       break;
     case 'tool_done': completeToolCall(msg);                      break;
+    case 'clarify':   onClarify(msg);                              break;
     case 'response':  addAIMessage(msg.content);                  break;
     case 'done':      finishQuery(msg.elapsed, false, msg.history_count, msg.tokens); break;
     case 'error':     showError(msg.message);                     break;
@@ -1185,6 +1230,71 @@ function onToken(text) {
   // Auto-scroll messages
   const msgs = document.getElementById('messages');
   msgs.scrollTop = msgs.scrollHeight;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   UI: Human-In-The-Loop Clarification
+═══════════════════════════════════════════════════════════════ */
+function onClarify(msg) {
+  removeThinking();
+  
+  // Hide empty state if it's there
+  const emptyEl = document.getElementById('empty-tracker');
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  const row  = makeEl('div', 'msg-row ai clarify-row');
+  const card = makeEl('div', 'ai-card md-content clarify-card');
+  
+  const questionDiv = makeEl('div', 'clarify-question');
+  questionDiv.textContent = msg.question;
+  
+  const optionsDiv = makeEl('div', 'clarify-options');
+  
+  msg.options.forEach(opt => {
+    const btn = makeEl('button', 'clarify-btn');
+    btn.onclick = () => {
+      // Disable all buttons in this clarify card
+      optionsDiv.querySelectorAll('button').forEach(b => {
+        b.disabled = true;
+        b.style.opacity = '0.5';
+        b.style.cursor = 'not-allowed';
+      });
+      // Highlight the selected option
+      btn.style.opacity = '1';
+      btn.style.borderColor = '#6366f1';
+      btn.style.background = 'rgba(99, 102, 241, 0.2)';
+      btn.style.color = '#fff';
+      
+      sendChoice(opt);
+    };
+    btn.textContent = opt;
+    optionsDiv.appendChild(btn);
+  });
+  
+  card.appendChild(questionDiv);
+  card.appendChild(optionsDiv);
+  row.appendChild(card);
+  appendMessage(row);
+}
+
+function sendChoice(choice) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showError('Not connected to server. Reconnecting…');
+    connect();
+    return;
+  }
+  
+  // Show user's selection in the chat UI
+  addUserMessage(choice);
+  
+  // Show thinking indicator since we are resuming execution
+  showThinking();
+  
+  currentStreamCard = null;
+  currentStreamText = '';
+  
+  // Send the choice payload back to backend
+  ws.send(JSON.stringify({ type: 'resume', choice: choice }));
 }
 
 /* ═══════════════════════════════════════════════════════════════
