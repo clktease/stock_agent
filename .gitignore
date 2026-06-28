@@ -21,3 +21,10 @@ uploads/*
 !uploads/.gitkeep
 test_holdings.csv
 test_real_holdings.csv
+
+# Executables and binary files
+*.exe
+*.dll
+*.bin
+
+

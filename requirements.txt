@@ -26,3 +26,5 @@ sentence-transformers
 pypdf
 unstructured
 beautifulsoup4
+# Scheduler
+apscheduler

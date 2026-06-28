@@ -12,20 +12,31 @@
 """
 
 import ast
+import asyncio
 import json
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any, AsyncGenerator, List, Optional, Set, Tuple
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, File, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, File, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.callbacks import AsyncCallbackHandler
 from langgraph.errors import GraphInterrupt
+
+try:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    HAS_APSCHEDULER = True
+except ImportError:
+    HAS_APSCHEDULER = False
+    print("⚠ apscheduler not installed. Run: pip install apscheduler")
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -109,6 +120,400 @@ class SessionManager:
 
 
 session_manager = SessionManager()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SSE Broadcaster (fan-out scheduled results to all connected clients)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SSEBroadcaster:
+    """Manages a set of SSE queues – one per connected /events client."""
+
+    def __init__(self):
+        self._queues: Set[asyncio.Queue] = set()
+
+    def register(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        self._queues.add(q)
+        return q
+
+    def unregister(self, q: asyncio.Queue) -> None:
+        self._queues.discard(q)
+
+    async def broadcast(self, payload: dict) -> None:
+        data = json.dumps(payload, ensure_ascii=False, default=str)
+        dead = set()
+        for q in list(self._queues):
+            try:
+                q.put_nowait(data)
+            except asyncio.QueueFull:
+                dead.add(q)
+        for q in dead:
+            self._queues.discard(q)
+
+
+sse_broadcaster = SSEBroadcaster()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheduled Results Storage
+# ─────────────────────────────────────────────────────────────────────────────
+
+_results_dir = Path(__file__).parent / "scheduled_results"
+_results_dir.mkdir(exist_ok=True)
+_RESULTS_KEEP = 30  # keep last N results per job
+
+
+def save_scheduled_result(job_id: str, prompt: str, result_text: str) -> dict:
+    """Persist a scheduled job result to disk."""
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    record = {
+        "job_id": job_id,
+        "executed_at": datetime.now(tz=timezone.utc).isoformat(),
+        "prompt": prompt,
+        "result": result_text,
+    }
+    path = _results_dir / f"{job_id}_{ts}.json"
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Prune old results for this job
+    old_files = sorted(_results_dir.glob(f"{job_id}_*.json"), key=lambda p: p.name)
+    for f in old_files[:-_RESULTS_KEEP]:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    return record
+
+
+def load_scheduled_results(job_id: str, limit: int = 10) -> list:
+    """Load the most recent results for a job."""
+    files = sorted(_results_dir.glob(f"{job_id}_*.json"), key=lambda p: p.name, reverse=True)
+    results = []
+    for f in files[:limit]:
+        try:
+            results.append(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Jobs Persistence (jobs.json)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_jobs_file = Path(__file__).parent / "jobs.json"
+
+
+def _load_jobs() -> list:
+    if _jobs_file.exists():
+        try:
+            data = json.loads(_jobs_file.read_text(encoding="utf-8"))
+            return data.get("jobs", [])
+        except Exception:
+            pass
+    return []
+
+
+def _save_jobs(jobs: list) -> None:
+    _jobs_file.write_text(
+        json.dumps({"jobs": jobs}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Natural Language Schedule Parser
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Map Chinese/English time words to (hour, minute)
+_TIME_MAP = [
+    (r"凌晨(\d+)點半?",   lambda m: (int(m.group(1)), 30 if "半" in m.group(0) else 0)),
+    (r"早上(\d+)點半?",   lambda m: (int(m.group(1)), 30 if "半" in m.group(0) else 0)),
+    (r"上午(\d+)點半?",   lambda m: (int(m.group(1)), 30 if "半" in m.group(0) else 0)),
+    (r"中午(\d+)點半?",   lambda m: (int(m.group(1)), 30 if "半" in m.group(0) else 0)),
+    (r"下午(\d+)點半?",   lambda m: (int(m.group(1)) + 12, 30 if "半" in m.group(0) else 0)),
+    (r"晚上(\d+)點半?",   lambda m: (int(m.group(1)) + (12 if int(m.group(1)) < 12 else 0),
+                                      30 if "半" in m.group(0) else 0)),
+    (r"午夜(\d+)點半?",   lambda m: (int(m.group(1)), 30 if "半" in m.group(0) else 0)),
+    # digit only: 21:00 / 9pm
+    (r"(\d{1,2}):(\d{2})\s*(?:am|pm)?", lambda m: (
+        int(m.group(1)) + (12 if "pm" in m.group(0).lower() and int(m.group(1)) != 12 else 0),
+        int(m.group(2)),
+    )),
+    (r"(\d{1,2})\s*pm",  lambda m: (int(m.group(1)) + (12 if int(m.group(1)) != 12 else 0), 0)),
+    (r"(\d{1,2})\s*am",  lambda m: (int(m.group(1)) % 12, 0)),
+]
+
+_WEEKDAY_MAP = {
+    "星期一": 1, "週一": 1, "Monday": 1, "monday": 1, "mon": 1,
+    "星期二": 2, "週二": 2, "Tuesday": 2, "tuesday": 2, "tue": 2,
+    "星期三": 3, "週三": 3, "Wednesday": 3, "wednesday": 3, "wed": 3,
+    "星期四": 4, "週四": 4, "Thursday": 4, "thursday": 4, "thu": 4,
+    "星期五": 5, "週五": 5, "Friday": 5, "friday": 5, "fri": 5,
+    "星期六": 6, "週六": 6, "Saturday": 6, "saturday": 6, "sat": 6,
+    "星期日": 7, "週日": 7, "Sunday": 7, "sunday": 7, "sun": 7,
+    "星期天": 7, "週天": 7,
+}
+
+_SCHEDULE_KEYWORDS = [
+    "每天", "每日", "每週", "每周", "每個星期", "每星期",
+    "every day", "everyday", "daily", "every week", "weekly",
+    "定時", "排程", "自動", "schedule",
+]
+
+
+def parse_schedule_intent(text: str) -> Optional[dict]:
+    """
+    Detect and parse a scheduling intent from natural language.
+
+    Returns a dict with keys: cron, description, prompt_for_agent
+    or None if no scheduling intent is detected.
+    """
+    text_lower = text.lower()
+
+    # Must contain a scheduling keyword
+    if not any(kw in text for kw in _SCHEDULE_KEYWORDS):
+        # fallback English check
+        if not any(kw in text_lower for kw in ["every day", "everyday", "daily", "every week", "weekly", "schedule"]):
+            return None
+
+    # Parse time
+    hour, minute = 9, 0  # default: 09:00
+    for pattern, extractor in _TIME_MAP:
+        m = re.search(pattern, text)
+        if m:
+            try:
+                hour, minute = extractor(m)
+                hour = max(0, min(23, hour))
+                minute = max(0, min(59, minute))
+            except Exception:
+                pass
+            break
+
+    # Parse weekday (for weekly schedules)
+    day_of_week = "*"
+    for word, dow in _WEEKDAY_MAP.items():
+        if word in text:
+            day_of_week = str(dow)
+            break
+
+    # Determine frequency label
+    is_weekly = any(kw in text for kw in ["每週", "每周", "每個星期", "every week", "weekly"]) \
+                or day_of_week != "*"
+
+    # Build cron expression
+    cron = f"{minute} {hour} * * {day_of_week}"
+
+    # Human-readable description
+    dow_names = {
+        "1": "週一", "2": "週二", "3": "週三", "4": "週四",
+        "5": "週五", "6": "週六", "7": "週日", "*": "每天",
+    }
+    freq_label = dow_names.get(day_of_week, "每天") if is_weekly else "每天"
+    time_label = f"{hour:02d}:{minute:02d}"
+    description = f"{freq_label} {time_label} 自動執行"
+
+    # The actual prompt sent to the agent (strip schedule-related words)
+    # We keep the core analytical intent
+    clean = re.sub(
+        r"(每天|每日|每週|每周|每個星期|每星期|定時|排程|自動|幫我|help me|every\s+day|everyday|daily|every\s+week|weekly|schedule[d]?\s*(to)?)",
+        "", text, flags=re.IGNORECASE,
+    )
+    # Remove time expressions
+    for pattern, _ in _TIME_MAP:
+        clean = re.sub(pattern, "", clean)
+    for word in _WEEKDAY_MAP:
+        clean = clean.replace(word, "")
+    # Remove time-of-day words
+    for tw in ["晚上", "早上", "上午", "下午", "凌晨", "中午", "午夜",
+               "morning", "evening", "night", "afternoon", "midnight", "noon",
+               "點半", "點", "pm", "am"]:
+        clean = clean.replace(tw, "")
+    clean = re.sub(r"\s+", " ", clean).strip(" 。，、！!.,")
+    if not clean:
+        clean = "請進行美股整體市場分析，包含大盤指數（SPY、QQQ、DIA）、VIX 恐慌指數、以及熱門科技股表現摘要。"
+
+    return {
+        "cron": cron,
+        "description": description,
+        "hour": hour,
+        "minute": minute,
+        "day_of_week": day_of_week,
+        "prompt_for_agent": clean,
+        "original_text": text,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheduler Manager
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SchedulerManager:
+    """Wraps APScheduler and manages cron-based agent jobs."""
+
+    def __init__(self):
+        if HAS_APSCHEDULER:
+            self.scheduler = AsyncIOScheduler(timezone="Asia/Taipei")
+        else:
+            self.scheduler = None
+        self._jobs: list = []   # list of job dicts (mirrors jobs.json)
+
+    def start(self) -> None:
+        if not self.scheduler:
+            return
+        self._jobs = _load_jobs()
+        for job in self._jobs:
+            if job.get("enabled", True):
+                self._register_apscheduler_job(job)
+        self.scheduler.start()
+        print(f"✓ Scheduler started with {len(self._jobs)} job(s)")
+
+    def stop(self) -> None:
+        if self.scheduler and self.scheduler.running:
+            self.scheduler.shutdown(wait=False)
+
+    def _register_apscheduler_job(self, job: dict) -> None:
+        if not self.scheduler:
+            return
+        try:
+            cron_parts = job["cron"].split()
+            trigger = CronTrigger(
+                minute=cron_parts[0],
+                hour=cron_parts[1],
+                day=cron_parts[2],
+                month=cron_parts[3],
+                day_of_week=cron_parts[4],
+                timezone="Asia/Taipei",
+            )
+            self.scheduler.add_job(
+                execute_scheduled_job,
+                trigger=trigger,
+                args=[job["id"], job["prompt"]],
+                id=job["id"],
+                replace_existing=True,
+            )
+        except Exception as e:
+            print(f"⚠ Failed to register job {job.get('id')}: {e}")
+
+    def add_job(self, cron: str, prompt: str, description: str) -> dict:
+        job = {
+            "id": str(uuid.uuid4()),
+            "cron": cron,
+            "prompt": prompt,
+            "description": description,
+            "created_at": datetime.now(tz=timezone.utc).isoformat(),
+            "last_run": None,
+            "enabled": True,
+        }
+        self._jobs.append(job)
+        _save_jobs(self._jobs)
+        if job["enabled"]:
+            self._register_apscheduler_job(job)
+        return job
+
+    def list_jobs(self) -> list:
+        return list(self._jobs)
+
+    def get_job(self, job_id: str) -> Optional[dict]:
+        return next((j for j in self._jobs if j["id"] == job_id), None)
+
+    def delete_job(self, job_id: str) -> bool:
+        job = self.get_job(job_id)
+        if not job:
+            return False
+        self._jobs = [j for j in self._jobs if j["id"] != job_id]
+        _save_jobs(self._jobs)
+        if self.scheduler:
+            try:
+                self.scheduler.remove_job(job_id)
+            except Exception:
+                pass
+        return True
+
+    def set_enabled(self, job_id: str, enabled: bool) -> Optional[dict]:
+        job = self.get_job(job_id)
+        if not job:
+            return None
+        job["enabled"] = enabled
+        _save_jobs(self._jobs)
+        if self.scheduler:
+            if enabled:
+                self._register_apscheduler_job(job)
+            else:
+                try:
+                    self.scheduler.remove_job(job_id)
+                except Exception:
+                    pass
+        return job
+
+    def update_last_run(self, job_id: str) -> None:
+        job = self.get_job(job_id)
+        if job:
+            job["last_run"] = datetime.now(tz=timezone.utc).isoformat()
+            _save_jobs(self._jobs)
+
+
+scheduler_manager = SchedulerManager()
+
+
+async def execute_scheduled_job(job_id: str, prompt: str) -> None:
+    """Called by APScheduler. Runs the agent and broadcasts results via SSE."""
+    print(f"⏰ Executing scheduled job {job_id}: {prompt[:60]}...")
+    try:
+        agent = await _get_agent()
+    except Exception as e:
+        await sse_broadcaster.broadcast({
+            "type": "scheduled_error",
+            "job_id": job_id,
+            "message": f"Agent init failed: {e}",
+        })
+        return
+
+    scheduler_manager.update_last_run(job_id)
+    job = scheduler_manager.get_job(job_id)
+    desc = job["description"] if job else "定時分析"
+
+    # Signal start
+    await sse_broadcaster.broadcast({
+        "type": "scheduled_start",
+        "job_id": job_id,
+        "description": desc,
+        "prompt": prompt,
+        "started_at": datetime.now(tz=timezone.utc).isoformat(),
+    })
+
+    try:
+        session = session_manager.new_session()
+        config = {
+            "configurable": {"thread_id": f"scheduled_{job_id}_{time.time()}"},
+            "recursion_limit": 100,
+        }
+        result = await agent.ainvoke(
+            {"messages": [("human", prompt)]},
+            config=config,
+        )
+        response_text = _extract_response(result)
+        session_manager.add_exchange(session.session_id, prompt, response_text)
+
+        record = save_scheduled_result(job_id, prompt, response_text)
+
+        await sse_broadcaster.broadcast({
+            "type": "scheduled_result",
+            "job_id": job_id,
+            "description": desc,
+            "session_id": session.session_id,
+            "result": response_text,
+            "executed_at": record["executed_at"],
+        })
+        print(f"✓ Scheduled job {job_id} completed.")
+    except Exception as e:
+        await sse_broadcaster.broadcast({
+            "type": "scheduled_error",
+            "job_id": job_id,
+            "description": desc,
+            "message": str(e),
+        })
 
 
 def classify_tool(name: str) -> str:
@@ -397,7 +802,14 @@ async def lifespan(app: FastAPI):
         print("✓  Agent ready")
     except Exception as e:
         print(f"⚠  Agent warm-up failed (will retry on first request): {e}")
+
+    # Start cron scheduler
+    scheduler_manager.start()
+
     yield
+
+    # Shutdown
+    scheduler_manager.stop()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -424,7 +836,110 @@ async def index():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "agent_ready": _agent is not None}
+    return {"status": "ok", "agent_ready": _agent is not None, "scheduler_running": bool(scheduler_manager.scheduler and scheduler_manager.scheduler.running)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SSE – Scheduled Result Push
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/events")
+async def sse_endpoint(request: Request):
+    """Server-Sent Events stream for scheduled job notifications."""
+    q = sse_broadcaster.register()
+
+    async def event_stream() -> AsyncGenerator[str, None]:
+        # Send heartbeat first
+        yield "data: {\"type\":\"connected\"}\n\n"
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    data = await asyncio.wait_for(q.get(), timeout=25)
+                    yield f"data: {data}\n\n"
+                except asyncio.TimeoutError:
+                    # Heartbeat to keep connection alive
+                    yield "data: {\"type\":\"ping\"}\n\n"
+        finally:
+            sse_broadcaster.unregister(q)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Schedule REST APIs
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/schedule/detect")
+async def detect_schedule(data: dict):
+    """Detect if a message contains a scheduling intent. Returns parsed intent or null."""
+    text = str(data.get("text", "")).strip()
+    if not text:
+        return {"intent": None}
+    intent = parse_schedule_intent(text)
+    return {"intent": intent}
+
+
+@app.post("/schedule")
+async def create_schedule(data: dict):
+    """Create a new scheduled job."""
+    cron    = str(data.get("cron", "")).strip()
+    prompt  = str(data.get("prompt", "")).strip()
+    description = str(data.get("description", "定時分析")).strip()
+
+    if not cron or not prompt:
+        return JSONResponse(status_code=400, content={"error": "cron and prompt are required"})
+
+    # Basic cron validation (5 fields)
+    if len(cron.split()) != 5:
+        return JSONResponse(status_code=400, content={"error": "Invalid cron expression (need 5 fields)"})
+
+    job = scheduler_manager.add_job(cron=cron, prompt=prompt, description=description)
+    return {"status": "created", "job": job}
+
+
+@app.get("/schedule")
+async def list_schedules():
+    """List all scheduled jobs."""
+    jobs = scheduler_manager.list_jobs()
+    return {"jobs": jobs}
+
+
+@app.delete("/schedule/{job_id}")
+async def delete_schedule(job_id: str):
+    """Delete a scheduled job."""
+    ok = scheduler_manager.delete_job(job_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    return {"status": "deleted", "job_id": job_id}
+
+
+@app.patch("/schedule/{job_id}")
+async def update_schedule(job_id: str, data: dict):
+    """Pause or resume a scheduled job."""
+    enabled = data.get("enabled")
+    if enabled is None:
+        return JSONResponse(status_code=400, content={"error": "enabled field required"})
+    job = scheduler_manager.set_enabled(job_id, bool(enabled))
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    return {"status": "updated", "job": job}
+
+
+@app.get("/schedule/{job_id}/results")
+async def get_schedule_results(job_id: str, limit: int = 10):
+    """Get execution history for a scheduled job."""
+    results = load_scheduled_results(job_id, limit=limit)
+    return {"job_id": job_id, "results": results}
 
 
 _uploads_dir = Path(__file__).parent / "uploads"

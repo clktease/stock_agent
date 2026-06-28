@@ -150,6 +150,29 @@ SUBAGENT_MODEL=openai:gpt-5.2
 
 ---
 
+## 🔌 Claude.ai 網頁版 MCP 整合 (Custom Connector)
+
+本專案支援將所有股票分析工具作為 **Custom Connector** 接入到 **Claude.ai 網頁版 (Pro/Team 方案)**，讓線上的 Claude 直接調用你本機 WSL 的數據。
+
+### 🚀 快速一鍵啟動 (Windows 適用)
+
+我們已建立一個一鍵自動化腳本 [start_claude_bridge.bat](file:///f:/deep_agent/start_claude_bridge.bat)，它會自動偵測 WSL 的虛擬 IP、啟動內部的 MCP 服務並開啟 Cloudflare Tunnel 穿透。
+
+1. 直接在本機按兩下執行 **`start_claude_bridge.bat`**。
+2. 稍等數秒後，視窗內會出現 Cloudflare 產生的隨機 HTTPS 網址：
+   ```text
+   Your quick Tunnel has been created! Visit it at:
+   https://xxxx.trycloudflare.com
+   ```
+3. 複製該網址，並在尾端加上 **`/mcp`**：
+   * 範例：`https://xxxx.trycloudflare.com/mcp`
+4. 登入 **Claude.ai** -> 右上角頭像 -> **Customize** -> **Connectors**。
+5. 點擊 **+ Add custom connector**，Name 輸入 `Stock Analysis Agent`，URL 貼上剛才的網址。
+6. 新增完成後，在新對話中點擊 **`+`** 勾選該 Connector，即可開始在線上與具有本機工具的 Claude 進行股票分析！
+
+---
+
 ## ⚠️ 免責聲明
 
 本工具僅供**教育與研究目的**。所有分析結果不構成個人投資建議。投資有風險，請自行判斷並諮詢專業財務顧問。
+

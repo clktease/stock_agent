@@ -891,8 +891,331 @@
       opacity: 0.45;
       cursor: not-allowed;
     }
+
+    /* ─── Schedule Sidebar (left panel extension) ────────────────── */
+    #schedule-sidebar {
+      border-top: 1px solid var(--panel-border);
+      flex-shrink: 0;
+    }
+    .schedule-sidebar-header {
+      padding: 10px 14px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .sched-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .sched-title .sched-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #f59e0b;
+    }
+    .sched-title .sched-dot.active {
+      background: #22c55e;
+      animation: wsGlow 2s infinite;
+    }
+    .add-sched-btn {
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s var(--ease);
+    }
+    .add-sched-btn:hover {
+      border-color: rgba(245,158,11,0.4);
+      background: rgba(245,158,11,0.08);
+      color: #fbbf24;
+    }
+
+    .sched-list {
+      overflow-y: auto;
+      max-height: 260px;
+      padding: 0 10px 8px;
+    }
+
+    .sched-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+      animation: fadeInUp 0.3s var(--ease);
+    }
+    .sched-card:hover { background: rgba(255,255,255,0.05); border-color: rgba(245,158,11,0.3); }
+    .sched-card.enabled  { border-left: 3px solid #22c55e; }
+    .sched-card.disabled { border-left: 3px solid #ef4444; opacity: 0.7; }
+
+    .sched-card-top {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 5px;
+    }
+    .sched-time-badge {
+      font-size: 11px; font-weight: 700;
+      padding: 2px 7px; border-radius: 6px;
+      background: rgba(245,158,11,0.15);
+      color: #fbbf24;
+      flex-shrink: 0;
+    }
+    .sched-desc {
+      flex: 1;
+      font-size: 11px; color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sched-prompt-preview {
+      font-size: 10px; color: var(--text-muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      margin-bottom: 6px;
+    }
+    .sched-last-run {
+      font-size: 10px; color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .sched-actions {
+      display: flex; gap: 5px; margin-top: 6px;
+    }
+    .sched-action-btn {
+      flex: 1;
+      font-size: 10px; font-weight: 600;
+      padding: 3px 0;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+    }
+    .sched-action-btn:hover { background: rgba(255,255,255,0.07); color: var(--text-primary); }
+    .sched-action-btn.history:hover { border-color: rgba(99,102,241,0.4); color: #a5b4fc; }
+    .sched-action-btn.toggle.on:hover  { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+    .sched-action-btn.toggle.off:hover { border-color: rgba(34,197,94,0.4); color: #4ade80; }
+    .sched-action-btn.del:hover { border-color: rgba(239,68,68,0.4); color: #fca5a5; background: rgba(239,68,68,0.05); }
+
+    .sched-empty {
+      text-align: center; padding: 16px 10px;
+      font-size: 11px; color: var(--text-muted); opacity: 0.6;
+    }
+
+    /* ─── Schedule Confirm Modal ─────────────────────────────────── */
+    #sched-modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(4,6,10,0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1001;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.25s var(--ease);
+    }
+    #sched-modal-overlay.visible {
+      opacity: 1; pointer-events: all;
+    }
+    #sched-modal {
+      background: rgba(12,18,35,0.97);
+      border: 1px solid rgba(245,158,11,0.25);
+      border-radius: 20px;
+      padding: 28px 28px 24px;
+      width: 420px; max-width: 92%;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(245,158,11,0.08);
+      transform: translateY(20px);
+      transition: transform 0.3s var(--ease);
+    }
+    #sched-modal-overlay.visible #sched-modal {
+      transform: translateY(0);
+    }
+    .sched-modal-icon { font-size: 36px; margin-bottom: 12px; }
+    .sched-modal-title {
+      font-size: 17px; font-weight: 700;
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      margin-bottom: 6px;
+    }
+    .sched-modal-subtitle {
+      font-size: 12px; color: var(--text-muted); margin-bottom: 20px;
+    }
+    .sched-detail-box {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+    }
+    .sched-detail-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-size: 12px; margin-bottom: 8px;
+    }
+    .sched-detail-row:last-child { margin-bottom: 0; }
+    .sdr-label {
+      font-weight: 600; color: var(--text-muted);
+      flex-shrink: 0; width: 60px;
+    }
+    .sdr-val { color: var(--text-primary); line-height: 1.5; }
+    .sdr-val.highlight {
+      font-weight: 700;
+      background: linear-gradient(135deg, #fbbf24, #f59e0b);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .sched-modal-prompt-edit {
+      width: 100%; background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px; padding: 8px 12px;
+      color: var(--text-primary); font-family: 'Inter', sans-serif;
+      font-size: 12px; resize: vertical; min-height: 60px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .sched-modal-prompt-edit:focus { border-color: rgba(245,158,11,0.4); }
+    .sched-modal-actions {
+      display: flex; gap: 10px;
+    }
+    .sched-confirm-btn {
+      flex: 1; padding: 11px 0;
+      border-radius: 10px; border: none;
+      font-size: 13px; font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+    }
+    .sched-confirm-btn.primary {
+      background: linear-gradient(135deg, #d97706, #f59e0b);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(245,158,11,0.3);
+    }
+    .sched-confirm-btn.primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(245,158,11,0.45); }
+    .sched-confirm-btn.secondary {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--panel-border);
+      color: var(--text-muted);
+    }
+    .sched-confirm-btn.secondary:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+
+    /* ─── Toast Notification ─────────────────────────────────────── */
+    #toast-container {
+      position: fixed; top: 70px; right: 16px;
+      z-index: 2000;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none;
+    }
+    .toast {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 12px 16px;
+      background: rgba(12,18,35,0.97);
+      border: 1px solid rgba(245,158,11,0.3);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      font-size: 13px;
+      min-width: 260px; max-width: 340px;
+      pointer-events: all;
+      cursor: pointer;
+      animation: toastIn 0.35s var(--ease) forwards;
+      transition: opacity 0.3s, transform 0.3s;
+    }
+    .toast.error { border-color: rgba(239,68,68,0.3); }
+    .toast.info  { border-color: rgba(99,102,241,0.3); }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    .toast-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .toast-body { flex: 1; }
+    .toast-title { font-weight: 700; color: #fbbf24; margin-bottom: 2px; }
+    .toast.error .toast-title { color: #fca5a5; }
+    .toast.info  .toast-title { color: #a5b4fc; }
+    .toast-msg   { font-size: 11px; color: var(--text-muted); line-height: 1.45; }
+    .toast-close { font-size: 14px; color: var(--text-muted); flex-shrink: 0; cursor: pointer; }
+    .toast-close:hover { color: var(--text-primary); }
+
+    /* ─── Scheduled Result Modal ─────────────────────────────────── */
+    #result-modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(4,6,10,0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1002;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.25s var(--ease);
+    }
+    #result-modal-overlay.visible { opacity: 1; pointer-events: all; }
+    #result-modal {
+      background: rgba(12,18,35,0.98);
+      border: 1px solid rgba(99,102,241,0.25);
+      border-radius: 20px;
+      width: 720px; max-width: 94%; max-height: 80vh;
+      display: flex; flex-direction: column;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.6);
+      transform: translateY(20px);
+      transition: transform 0.3s var(--ease);
+    }
+    #result-modal-overlay.visible #result-modal { transform: translateY(0); }
+    .result-modal-header {
+      padding: 18px 22px 14px;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .result-modal-title {
+      font-size: 15px; font-weight: 700;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .result-modal-close {
+      width: 30px; height: 30px;
+      border-radius: 8px; border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s var(--ease);
+    }
+    .result-modal-close:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+    .result-modal-meta {
+      padding: 10px 22px;
+      font-size: 11px; color: var(--text-muted);
+      border-bottom: 1px solid var(--panel-border);
+      flex-shrink: 0;
+      display: flex; gap: 16px; flex-wrap: wrap;
+    }
+    .result-modal-body {
+      flex: 1; overflow-y: auto;
+      padding: 20px 22px;
+    }
+    .result-hist-tabs {
+      display: flex; gap: 6px;
+      padding: 10px 22px 0;
+      flex-shrink: 0;
+    }
+    .result-hist-tab {
+      font-size: 11px; font-weight: 600;
+      padding: 5px 12px; border-radius: 8px;
+      border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+    }
+    .result-hist-tab.active {
+      border-color: rgba(99,102,241,0.4);
+      background: rgba(99,102,241,0.1);
+      color: #a5b4fc;
+    }
+    .result-hist-tab:hover:not(.active) {
+      background: rgba(255,255,255,0.06); color: var(--text-primary);
+    }
   </style>
 </head>
+
 <body>
 
 <div id="app">
@@ -1010,6 +1333,21 @@
         </div>
 
       </div>
+
+      <!-- ── Scheduled Tasks Section ── -->
+      <div id="schedule-sidebar">
+        <div class="schedule-sidebar-header">
+          <div class="sched-title">
+            <div class="sched-dot" id="sched-status-dot"></div>
+            定時排程
+          </div>
+          <button class="add-sched-btn" id="add-sched-btn" title="新增排程" onclick="openSchedManual()">＋</button>
+        </div>
+        <div class="sched-list" id="sched-list">
+          <div class="sched-empty" id="sched-empty">⏰ 尚無定時任務<br>在聊天框輸入「每天晚上九點做美股分析」即可建立</div>
+        </div>
+      </div>
+
     </nav>
 
     <!-- Center Panel -->
@@ -1108,6 +1446,55 @@
   </div><!-- /#body -->
 </div><!-- /#app -->
 
+<!-- ── Toast Container ── -->
+<div id="toast-container"></div>
+
+<!-- ── Schedule Confirm Modal ── -->
+<div id="sched-modal-overlay" onclick="closeSchedModal(event)">
+  <div id="sched-modal">
+    <div class="sched-modal-icon">📅</div>
+    <div class="sched-modal-title">偵測到定時排程指令</div>
+    <div class="sched-modal-subtitle">系統解析到您要建立自動定時任務，請確認設定後送出。</div>
+    <div class="sched-detail-box">
+      <div class="sched-detail-row">
+        <span class="sdr-label">⏰ 排程</span>
+        <span class="sdr-val highlight" id="sched-modal-time">每天 21:00</span>
+      </div>
+      <div class="sched-detail-row">
+        <span class="sdr-label">🕐 Cron</span>
+        <span class="sdr-val" id="sched-modal-cron" style="font-family:monospace;font-size:11px;color:#7dd3fc">0 21 * * *</span>
+      </div>
+      <div class="sched-detail-row">
+        <span class="sdr-label">🌏 時區</span>
+        <span class="sdr-val">Asia/Taipei（UTC+8）</span>
+      </div>
+      <div class="sched-detail-row">
+        <span class="sdr-label">📋 任務</span>
+        <div style="flex:1">
+          <textarea class="sched-modal-prompt-edit" id="sched-modal-prompt" rows="3"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="sched-modal-actions">
+      <button class="sched-confirm-btn secondary" onclick="closeSchedModal()">✕ 取消</button>
+      <button class="sched-confirm-btn primary" id="sched-confirm-btn" onclick="confirmSchedule()">✓ 建立排程</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Result Viewer Modal ── -->
+<div id="result-modal-overlay" onclick="closeResultModal(event)">
+  <div id="result-modal">
+    <div class="result-modal-header">
+      <div class="result-modal-title" id="result-modal-title">📊 定時分析報告</div>
+      <button class="result-modal-close" onclick="closeResultModal()">✕</button>
+    </div>
+    <div class="result-hist-tabs" id="result-hist-tabs"></div>
+    <div class="result-modal-meta" id="result-modal-meta"></div>
+    <div class="result-modal-body md-content" id="result-modal-body"></div>
+  </div>
+</div>
+
 <script>
 /* ═══════════════════════════════════════════════════════════════
    marked.js config
@@ -1120,6 +1507,7 @@ marked.setOptions({ breaks: true, gfm: true });
 let ws            = null;
 let isProcessing  = false;
 let reconnectDelay = 1500;
+
 let reconnectTimer = null;
 let thinkingEl    = null;
 let currentSessionId = null;
@@ -1907,7 +2295,361 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Connect WebSocket
   connect();
+
+  // Connect SSE for scheduler push notifications
+  connectSSE();
+
+  // Load existing scheduled jobs into sidebar
+  loadScheduledJobs();
 });
+
+/* ═══════════════════════════════════════════════════════════════
+   SSE Client (Scheduler Push)
+═══════════════════════════════════════════════════════════════ */
+let sseSource = null;
+
+function connectSSE() {
+  if (sseSource) { sseSource.close(); }
+  sseSource = new EventSource('/events');
+
+  sseSource.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    handleSSEMessage(msg);
+  };
+
+  sseSource.onerror = () => {
+    // Auto-reconnect is handled by browser
+  };
+}
+
+function handleSSEMessage(msg) {
+  if (msg.type === 'ping' || msg.type === 'connected') return;
+
+  if (msg.type === 'scheduled_start') {
+    showToast('info', '⏰', `定時任務執行中…`, msg.description || '分析進行中，請稍候。');
+    // Pulse the sidebar dot
+    const dot = document.getElementById('sched-status-dot');
+    if (dot) dot.classList.add('active');
+  }
+
+  if (msg.type === 'scheduled_result') {
+    const dot = document.getElementById('sched-status-dot');
+    if (dot) dot.classList.remove('active');
+
+    showToast('success', '✅', '定時分析完成！', msg.description + ' · 點擊查看報告', () => {
+      openResultByJobId(msg.job_id);
+    });
+
+    // Refresh sidebar to update last_run time
+    loadScheduledJobs();
+  }
+
+  if (msg.type === 'scheduled_error') {
+    const dot = document.getElementById('sched-status-dot');
+    if (dot) dot.classList.remove('active');
+    showToast('error', '⚠️', '定時任務失敗', msg.message || '未知錯誤');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Toast Notification
+═══════════════════════════════════════════════════════════════ */
+function showToast(type, icon, title, msg, onClick) {
+  const container = document.getElementById('toast-container');
+  const toast = makeEl('div', `toast ${type === 'error' ? 'error' : type === 'info' ? 'info' : ''}`);
+
+  toast.innerHTML = `
+    <div class="toast-icon">${icon}</div>
+    <div class="toast-body">
+      <div class="toast-title">${escapeHtml(title)}</div>
+      <div class="toast-msg">${escapeHtml(msg)}</div>
+    </div>
+    <div class="toast-close" onclick="this.parentElement.remove()">✕</div>
+  `;
+
+  if (onClick) {
+    toast.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('toast-close')) onClick();
+    });
+  }
+
+  container.appendChild(toast);
+
+  // Auto-dismiss after 8s
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(20px)';
+    setTimeout(() => toast.remove(), 350);
+  }, 8000);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Schedule Detection (intercept sendQuery)
+═══════════════════════════════════════════════════════════════ */
+
+// Wrap sendQuery to detect schedule intent before sending
+const _origSendQuery = sendQuery;
+// Override the existing sendQuery function defined above
+window.sendQuery = async function() {
+  if (isProcessing) return;
+  const input = document.getElementById('query-input');
+  const text  = input.value.trim();
+  if (!text) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showError('Not connected to server. Reconnecting…');
+    connect();
+    return;
+  }
+
+  // Detect if this is a schedule intent
+  try {
+    const res = await fetch('/schedule/detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (data.intent) {
+      openSchedModal(data.intent);
+      return;
+    }
+  } catch (e) {
+    // If detect fails, continue normally
+  }
+
+  // Normal query flow
+  _origSendQuery();
+};
+
+// Re-attach event listeners that point to sendQuery
+document.getElementById('send-btn').onclick = () => window.sendQuery();
+document.getElementById('query-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.ctrlKey) {
+    e.preventDefault();
+    window.sendQuery();
+  }
+}, { once: false });
+
+/* ═══════════════════════════════════════════════════════════════
+   Schedule Confirm Modal
+═══════════════════════════════════════════════════════════════ */
+let _pendingSchedIntent = null;
+
+function openSchedModal(intent) {
+  _pendingSchedIntent = intent;
+
+  // Render time label
+  const dow = { '1':'週一','2':'週二','3':'週三','4':'週四','5':'週五','6':'週六','7':'週日','*':'每天' };
+  const dayLabel = dow[intent.day_of_week] || '每天';
+  const timeLabel = `${String(intent.hour).padStart(2,'0')}:${String(intent.minute).padStart(2,'0')}`;
+  document.getElementById('sched-modal-time').textContent = `${dayLabel} ${timeLabel}（Asia/Taipei）`;
+  document.getElementById('sched-modal-cron').textContent = intent.cron;
+  document.getElementById('sched-modal-prompt').value = intent.prompt_for_agent;
+
+  document.getElementById('sched-modal-overlay').classList.add('visible');
+}
+
+function openSchedManual() {
+  // Open modal with blank defaults
+  openSchedModal({
+    cron: '0 9 * * *',
+    hour: 9, minute: 0, day_of_week: '*',
+    prompt_for_agent: '請進行美股整體市場分析，包含大盤指數（SPY、QQQ、DIA）、VIX 恐慌指數、以及熱門科技股表現摘要。',
+  });
+}
+
+function closeSchedModal(e) {
+  if (e && e.target !== document.getElementById('sched-modal-overlay')) return;
+  document.getElementById('sched-modal-overlay').classList.remove('visible');
+  _pendingSchedIntent = null;
+}
+
+async function confirmSchedule() {
+  if (!_pendingSchedIntent) return;
+
+  const btn = document.getElementById('sched-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = '建立中…';
+
+  const prompt = document.getElementById('sched-modal-prompt').value.trim();
+  const cron   = _pendingSchedIntent.cron;
+  const description = _pendingSchedIntent.description || '定時分析';
+
+  try {
+    const res = await fetch('/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cron, prompt, description }),
+    });
+    const data = await res.json();
+    if (data.status === 'created') {
+      document.getElementById('sched-modal-overlay').classList.remove('visible');
+      _pendingSchedIntent = null;
+      showToast('success', '📅', '排程建立成功！', description + ' — 系統將自動執行。');
+      loadScheduledJobs();
+    } else {
+      showToast('error', '⚠️', '建立失敗', JSON.stringify(data));
+    }
+  } catch (e) {
+    showToast('error', '⚠️', '建立失敗', String(e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ 建立排程';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Schedule Sidebar
+═══════════════════════════════════════════════════════════════ */
+async function loadScheduledJobs() {
+  try {
+    const res = await fetch('/schedule');
+    const data = await res.json();
+    renderSchedSidebar(data.jobs || []);
+  } catch (e) {
+    // Silently fail
+  }
+}
+
+function renderSchedSidebar(jobs) {
+  const list  = document.getElementById('sched-list');
+  const empty = document.getElementById('sched-empty');
+
+  // Clear existing cards (keep empty placeholder)
+  list.querySelectorAll('.sched-card').forEach(c => c.remove());
+
+  if (jobs.length === 0) {
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  jobs.forEach(job => {
+    const card = makeEl('div', `sched-card ${job.enabled ? 'enabled' : 'disabled'}`);
+    card.dataset.jobId = job.id;
+
+    // Parse cron for display
+    const parts = (job.cron || '').split(' ');
+    const hh = parts[1] !== undefined ? parts[1].padStart(2,'0') : '??';
+    const mm = parts[0] !== undefined ? parts[0].padStart(2,'0') : '00';
+    const dowMap = {'1':'週一','2':'週二','3':'週三','4':'週四','5':'週五','6':'週六','7':'週日','*':'每天'};
+    const dayLabel = dowMap[parts[4]] || '每天';
+    const timeLabel = `${hh}:${mm}`;
+
+    const lastRun = job.last_run
+      ? new Date(job.last_run).toLocaleString('zh-TW', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})
+      : '尚未執行';
+
+    card.innerHTML = `
+      <div class="sched-card-top">
+        <span class="sched-time-badge">⏰ ${dayLabel} ${timeLabel}</span>
+        <span class="sched-desc">${escapeHtml(job.description || '定時分析')}</span>
+      </div>
+      <div class="sched-prompt-preview">${escapeHtml((job.prompt || '').slice(0, 50))}…</div>
+      <div class="sched-last-run">上次執行：${lastRun}</div>
+      <div class="sched-actions">
+        <button class="sched-action-btn history" onclick="openResultByJobId('${job.id}')">📋 歷史</button>
+        <button class="sched-action-btn toggle ${job.enabled ? 'on' : 'off'}" onclick="toggleJob('${job.id}', ${!job.enabled})">${job.enabled ? '⏸ 暫停' : '▶ 啟用'}</button>
+        <button class="sched-action-btn del" onclick="deleteJob('${job.id}')">🗑</button>
+      </div>
+    `;
+
+    list.appendChild(card);
+  });
+}
+
+async function toggleJob(jobId, enabled) {
+  try {
+    await fetch(`/schedule/${jobId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    loadScheduledJobs();
+    showToast('info', enabled ? '▶' : '⏸', enabled ? '排程已啟用' : '排程已暫停', '');
+  } catch (e) {
+    showToast('error', '⚠️', '操作失敗', String(e));
+  }
+}
+
+async function deleteJob(jobId) {
+  if (!confirm('確定要刪除此排程？')) return;
+  try {
+    await fetch(`/schedule/${jobId}`, { method: 'DELETE' });
+    loadScheduledJobs();
+    showToast('info', '🗑', '排程已刪除', '');
+  } catch (e) {
+    showToast('error', '⚠️', '刪除失敗', String(e));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Result Viewer Modal
+═══════════════════════════════════════════════════════════════ */
+async function openResultByJobId(jobId) {
+  try {
+    const res = await fetch(`/schedule/${jobId}/results?limit=10`);
+    const data = await res.json();
+
+    const results = data.results || [];
+    if (results.length === 0) {
+      showToast('info', 'ℹ️', '尚無執行記錄', '此排程尚未執行過。');
+      return;
+    }
+
+    openResultModal(jobId, results);
+  } catch (e) {
+    showToast('error', '⚠️', '載入失敗', String(e));
+  }
+}
+
+let _currentResults = [];
+let _currentResultIdx = 0;
+
+function openResultModal(jobId, results) {
+  _currentResults = results;
+  _currentResultIdx = 0;
+
+  // Render tabs
+  const tabsEl = document.getElementById('result-hist-tabs');
+  tabsEl.innerHTML = '';
+  results.forEach((r, i) => {
+    const tab = makeEl('button', `result-hist-tab ${i === 0 ? 'active' : ''}`);
+    const d = new Date(r.executed_at);
+    tab.textContent = d.toLocaleString('zh-TW', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    tab.onclick = () => {
+      tabsEl.querySelectorAll('.result-hist-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderResultContent(i);
+    };
+    tabsEl.appendChild(tab);
+  });
+
+  renderResultContent(0);
+  document.getElementById('result-modal-overlay').classList.add('visible');
+}
+
+function renderResultContent(idx) {
+  const r = _currentResults[idx];
+  if (!r) return;
+  _currentResultIdx = idx;
+
+  document.getElementById('result-modal-title').textContent = '📊 定時分析報告';
+
+  const d = new Date(r.executed_at);
+  document.getElementById('result-modal-meta').innerHTML = `
+    <span>🕐 執行時間：${d.toLocaleString('zh-TW')}</span>
+    <span>📋 任務：${escapeHtml((r.prompt || '').slice(0, 60))}…</span>
+  `;
+
+  document.getElementById('result-modal-body').innerHTML = marked.parse(r.result || '（無內容）');
+}
+
+function closeResultModal(e) {
+  if (e && e.target !== document.getElementById('result-modal-overlay')) return;
+  document.getElementById('result-modal-overlay').classList.remove('visible');
+}
 </script>
 </body>
 </html>
