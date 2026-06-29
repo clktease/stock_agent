@@ -944,50 +944,233 @@ async def get_schedule_results(job_id: str, limit: int = 10):
 
 _uploads_dir = Path(__file__).parent / "uploads"
 _uploads_dir.mkdir(exist_ok=True)
+_holdings_history_dir = _uploads_dir / "history"
+_holdings_history_dir.mkdir(exist_ok=True)
+_holdings_index_file = _uploads_dir / "holdings_index.json"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Holdings History Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_holdings_index() -> list:
+    """Load the list of saved holdings versions from disk."""
+    if _holdings_index_file.exists():
+        try:
+            return json.loads(_holdings_index_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_holdings_index(index: list) -> None:
+    _holdings_index_file.write_text(
+        json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _detect_ticker_col(df) -> str:
+    """Find the ticker/symbol column in a holdings DataFrame."""
+    cols_lower = [str(c).strip().lower() for c in df.columns]
+    for idx, col in enumerate(cols_lower):
+        if col in ("ticker", "symbol", "stock", "code", "shares symbol", "instrument", "代號", "股票代碼"):
+            return df.columns[idx]
+    for idx, col in enumerate(cols_lower):
+        if "ticker" in col or "symbol" in col or "stock" in col or "代號" in col:
+            return df.columns[idx]
+    return df.columns[0]
+
+
+def _detect_qty_col(df) -> Optional[str]:
+    """Find the quantity/shares column in a holdings DataFrame."""
+    cols_lower = [str(c).strip().lower() for c in df.columns]
+    qty_keywords = ("qty", "quantity", "shares", "amount", "數量", "股數", "持股數", "單位")
+    for idx, col in enumerate(cols_lower):
+        if any(kw in col for kw in qty_keywords):
+            return df.columns[idx]
+    # Fallback: second numeric column if available
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    if len(numeric_cols) >= 1:
+        return numeric_cols[0]
+    return None
+
+
+def _parse_holdings_df(df) -> dict:
+    """Return {ticker: qty} dict from a DataFrame. qty=None if no qty col."""
+    ticker_col = _detect_ticker_col(df)
+    qty_col    = _detect_qty_col(df)
+    result = {}
+    for _, row in df.iterrows():
+        t = str(row[ticker_col]).strip().upper()
+        if not t or t in ("TICKER", "SYMBOL", "STOCK", "NAN", ""):
+            continue
+        qty = None
+        if qty_col:
+            try:
+                qty = float(row[qty_col])
+            except (ValueError, TypeError):
+                qty = None
+        result[t] = qty
+    return result
+
+
+def _compare_holdings(old_map: dict, new_map: dict) -> dict:
+    """
+    Compare two {ticker: qty} dicts.
+    Returns:
+      added:   [{ticker, qty}]
+      removed: [{ticker, qty}]
+      changed: [{ticker, old_qty, new_qty, delta}]
+      unchanged: [ticker]
+    """
+    old_set = set(old_map)
+    new_set = set(new_map)
+
+    added   = [{"ticker": t, "qty": new_map[t]} for t in sorted(new_set - old_set)]
+    removed = [{"ticker": t, "qty": old_map[t]} for t in sorted(old_set - new_set)]
+    changed = []
+    unchanged = []
+    for t in sorted(old_set & new_set):
+        o, n = old_map[t], new_map[t]
+        if o is not None and n is not None:
+            delta = n - o
+            if abs(delta) > 1e-9:
+                changed.append({"ticker": t, "old_qty": o, "new_qty": n, "delta": delta})
+            else:
+                unchanged.append(t)
+        else:
+            unchanged.append(t)
+    return {"added": added, "removed": removed, "changed": changed, "unchanged": unchanged}
+
+
+def _holdings_have_changed(old_map: dict, new_map: dict) -> bool:
+    diff = _compare_holdings(old_map, new_map)
+    return bool(diff["added"] or diff["removed"] or diff["changed"])
+
+
+def _next_version_path(date_str: str) -> Path:
+    """Return the next available versioned path for today."""
+    for n in range(1, 9999):
+        p = _holdings_history_dir / f"holdings_{date_str}_{n:03d}.csv"
+        if not p.exists():
+            return p
+    raise RuntimeError("Too many holdings versions for today")
+
+
+def _save_holdings_version(content_bytes: bytes, new_map: dict, tickers: list, filename: str) -> dict:
+    """
+    Check whether holdings changed vs the latest saved version.
+    If changed (or no history), save a new versioned file and update index.
+    Returns a result dict with: is_new_version, diff, version_path, version_id.
+    """
+    import pandas as pd
+    import io
+
+    index = _load_holdings_index()
+    date_str = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+
+    diff = None
+    is_new_version = True
+
+    if index:
+        latest = index[-1]
+        latest_path = Path(__file__).parent / latest["path"]
+        if latest_path.exists():
+            try:
+                old_df = pd.read_csv(latest_path)
+                old_map = _parse_holdings_df(old_df)
+                diff = _compare_holdings(old_map, new_map)
+                is_new_version = _holdings_have_changed(old_map, new_map)
+            except Exception:
+                is_new_version = True
+
+    if is_new_version:
+        version_path = _next_version_path(date_str)
+        version_path.write_bytes(content_bytes)
+        rel_path = f"uploads/history/{version_path.name}"
+        version_id = version_path.stem
+
+        entry = {
+            "version_id": version_id,
+            "path": rel_path,
+            "filename": filename,
+            "date": date_str,
+            "saved_at": datetime.now(tz=timezone.utc).isoformat(),
+            "tickers": tickers,
+            "total_rows": len(new_map),
+        }
+        index.append(entry)
+        _save_holdings_index(index)
+    else:
+        # Reuse the existing latest path
+        latest = index[-1]
+        rel_path = latest["path"]
+        version_id = latest["version_id"]
+
+    return {
+        "is_new_version": is_new_version,
+        "diff": diff,
+        "version_path": rel_path,
+        "version_id": version_id,
+    }
 
 
 @app.post("/upload")
 async def upload_holdings(file: UploadFile = File(...), session_id: str = "default"):
     if not file.filename.endswith(".csv"):
         return JSONResponse(status_code=400, content={"error": "Only CSV files are supported."})
-    
+
     try:
-        filename = f"holdings_{session_id}.csv"
-        file_path = _uploads_dir / filename
-        
-        # Save file bytes
-        content = await file.read()
-        file_path.write_bytes(content)
-        
-        # Verify parser
         import pandas as pd
-        df = pd.read_csv(file_path)
+        import io
+
+        content = await file.read()
+
+        # Also keep the legacy session file for backward compat
+        legacy_path = _uploads_dir / f"holdings_{session_id}.csv"
+        legacy_path.write_bytes(content)
+
+        # Parse
+        df = pd.read_csv(io.BytesIO(content))
         tickers = []
+        new_map = {}
         if not df.empty:
-            cols_lower = [str(c).strip().lower() for c in df.columns]
-            ticker_col = None
-            for idx, col in enumerate(cols_lower):
-                if col in ("ticker", "symbol", "stock", "code", "shares symbol", "instrument"):
-                    ticker_col = df.columns[idx]
-                    break
-            if not ticker_col:
-                for idx, col in enumerate(cols_lower):
-                    if "ticker" in col or "symbol" in col or "stock" in col:
-                        ticker_col = df.columns[idx]
-                        break
-            if not ticker_col:
-                ticker_col = df.columns[0]
-            tickers = [str(t).strip().upper() for t in df[ticker_col].dropna().unique() if str(t).strip() and str(t).strip().upper() not in ("TICKER", "SYMBOL", "STOCK", "NAN", "")]
-            
+            new_map = _parse_holdings_df(df)
+            tickers = list(new_map.keys())
+
+        # Version management
+        version_result = _save_holdings_version(content, new_map, tickers, file.filename)
+
         return {
             "status": "success",
             "filename": file.filename,
-            "saved_path": f"uploads/{filename}",
+            "saved_path": version_result["version_path"],
+            "legacy_path": f"uploads/holdings_{session_id}.csv",
             "tickers_detected": tickers[:8],
-            "total_rows": len(df) if not df.empty else 0
+            "total_rows": len(df) if not df.empty else 0,
+            "is_new_version": version_result["is_new_version"],
+            "version_id": version_result["version_id"],
+            "diff": version_result["diff"],
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to save and parse CSV file: {str(e)}"})
+
+
+@app.get("/holdings/latest")
+async def get_latest_holdings():
+    """Return metadata for the most recently saved holdings version."""
+    index = _load_holdings_index()
+    if not index:
+        return {"latest": None}
+    latest = index[-1]
+    return {"latest": latest}
+
+
+@app.get("/holdings/history")
+async def get_holdings_history():
+    """Return all saved holdings versions (newest first)."""
+    index = _load_holdings_index()
+    return {"versions": list(reversed(index))}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

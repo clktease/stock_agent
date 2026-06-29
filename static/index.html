@@ -519,6 +519,62 @@
     #upload-btn:disabled { opacity: 0.45; cursor: not-allowed; }
     #upload-btn svg { width: 18px; height: 18px; }
 
+    /* Use-last-holdings button */
+    #last-holdings-btn {
+      flex-shrink: 0;
+      height: 38px;
+      padding: 0 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(99,102,241,0.3);
+      background: rgba(99,102,241,0.07);
+      color: #a5b4fc;
+      cursor: pointer;
+      display: none; /* shown only when history exists */
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: border-color 0.2s, background 0.2s, transform 0.1s;
+      margin-bottom: 2px;
+      letter-spacing: 0.02em;
+    }
+    #last-holdings-btn.visible { display: flex; }
+    #last-holdings-btn:hover:not(:disabled) {
+      border-color: rgba(99,102,241,0.6);
+      background: rgba(99,102,241,0.15);
+      transform: translateY(-1px);
+    }
+    #last-holdings-btn:active:not(:disabled) { transform: scale(0.95); }
+    #last-holdings-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    #last-holdings-btn svg { width: 14px; height: 14px; }
+
+    /* Holdings diff summary */
+    .diff-summary {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-top: 8px;
+    }
+    .diff-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    }
+    .diff-badge.added   { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.25); }
+    .diff-badge.removed { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
+    .diff-badge.changed { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.2); }
+    .diff-badge.same    { background: rgba(100,116,139,0.12);color: #94a3b8; border: 1px solid rgba(100,116,139,0.2); }
+
+    .diff-detail-list {
+      margin-top: 6px;
+      font-size: 11.5px;
+      color: #94a3b8;
+      line-height: 1.7;
+    }
+    .diff-detail-list .di-added   { color: #34d399; }
+    .diff-detail-list .di-removed { color: #f87171; }
+    .diff-detail-list .di-changed { color: #fbbf24; }
+
     /* Spinner */
     .spinner {
       width: 16px; height: 16px;
@@ -1390,6 +1446,13 @@
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
             </svg>
           </button>
+          <button id="last-holdings-btn" title="使用上次持股直接分析" onclick="useLatestHoldings()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+            </svg>
+            上次持股
+          </button>
           <input type="file" id="csv-file-input" accept=".csv" style="display: none;" onchange="handleCSVSelected(event)">
           <textarea
             id="query-input"
@@ -2048,9 +2111,11 @@ function setInputEnabled(enabled) {
   const input = document.getElementById('query-input');
   const btn   = document.getElementById('send-btn');
   const uploadBtn = document.getElementById('upload-btn');
+  const lastBtn   = document.getElementById('last-holdings-btn');
   input.disabled = !enabled;
   btn.disabled   = !enabled;
   if (uploadBtn) uploadBtn.disabled = !enabled;
+  if (lastBtn)   lastBtn.disabled   = !enabled;
   if (!enabled) {
     btn.innerHTML = '<div class="spinner"></div>';
   } else {
@@ -2118,6 +2183,143 @@ function formatArgs(args, summary) {
     .join('  ·  ');
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Holdings History — state
+═══════════════════════════════════════════════════════════════ */
+let _latestHoldings = null;  // populated on load from /holdings/latest
+
+/* Called on DOMContentLoaded — checks if there's any saved holdings history */
+async function loadLatestHoldings() {
+  try {
+    const res = await fetch('/holdings/latest');
+    const data = await res.json();
+    _latestHoldings = data.latest || null;
+    const btn = document.getElementById('last-holdings-btn');
+    if (btn && _latestHoldings) {
+      const d = _latestHoldings.date;
+      const dateStr = d ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : '';
+      btn.title = `使用上次持股（${_latestHoldings.filename}，${dateStr}，共 ${_latestHoldings.total_rows} 檔）`;
+      btn.classList.add('visible');
+    }
+  } catch (e) {
+    // Silently fail — feature degrades gracefully
+  }
+}
+
+/* Triggered when user clicks "上次持股" button */
+function useLatestHoldings() {
+  if (isProcessing || !_latestHoldings) return;
+
+  // Show info banner in chat
+  const row = makeEl('div', 'msg-row system');
+  const card = makeEl('div', 'system-card');
+  card.style.cssText = 'background:rgba(99,102,241,0.10);border:1px solid rgba(99,102,241,0.25);color:#a5b4fc;padding:12px 16px;border-radius:12px;font-size:13px;margin:10px 0;max-width:80%;animation:fadeInUp 0.3s var(--ease) forwards;';
+  const d = _latestHoldings.date;
+  const dateStr = d ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : '(未知日期)';
+  card.innerHTML = `📂 <strong>載入上次持股：</strong>${escapeHtml(_latestHoldings.filename)}<br><span style="color:#94a3b8;font-size:12px;display:inline-block;margin-top:4px;">版本日期 ${dateStr}，共 ${_latestHoldings.total_rows} 檔股票（${(_latestHoldings.tickers||[]).slice(0,6).join(', ')}${(_latestHoldings.tickers||[]).length > 6 ? ' …' : ''}）</span>`;
+  row.appendChild(card);
+  appendMessage(row);
+
+  // Go straight to language selection then analysis
+  showLanguageSelectionModal(_latestHoldings, (lang) => {
+    isProcessing = true;
+    setInputEnabled(false);
+
+    const isChinese = (lang === 'zh');
+    const savedPath = _latestHoldings.path;
+    let prompt = isChinese
+      ? `我已將持股 CSV 檔案上傳至：${savedPath}。請讀取此檔案，提取我的持股資訊，並進行完整的投資組合分析，包含夏普值、波動率以及每檔股票的技術面與基本面展望。請以繁體中文回答。`
+      : `I have uploaded my holdings CSV to: ${savedPath}. Please read this file, extract my holdings, and perform a complete portfolio analysis including Sharpe ratio, volatility, and technical/fundamental outlook for each stock.`;
+
+    const userMsg = isChinese ? `分析上次持股：${_latestHoldings.filename}` : `Analyze last holdings: ${_latestHoldings.filename}`;
+    addUserMessage(userMsg);
+
+    currentQuery.tools = 0;
+    currentQuery.layers = new Map();
+    currentQuery.startTime = Date.now();
+    currentStreamCard = null;
+    currentStreamText = '';
+
+    const sb = document.getElementById('stats-bar');
+    sb.style.display = 'none';
+    sb.innerHTML = '';
+
+    showThinking();
+    ws.send(JSON.stringify({ query: prompt }));
+  });
+}
+
+/* Build diff HTML for the upload success banner */
+function buildDiffHTML(diff, isNewVersion) {
+  if (!diff) return '';
+  if (!isNewVersion) {
+    return `<div class="diff-summary"><span class="diff-badge same">✓ 持股未變更</span></div>`;
+  }
+
+  const parts = [];
+  if (diff.added && diff.added.length)   parts.push(`<span class="diff-badge added">＋${diff.added.length} 新開倉</span>`);
+  if (diff.removed && diff.removed.length) parts.push(`<span class="diff-badge removed">－${diff.removed.length} 已平倉</span>`);
+  if (diff.changed && diff.changed.length) parts.push(`<span class="diff-badge changed">↕ ${diff.changed.length} 調整部位</span>`);
+  if (!parts.length) return '';
+
+  let details = '';
+  const detailLines = [];
+  (diff.added || []).forEach(x => {
+    const qty = x.qty != null ? ` × ${x.qty}` : '';
+    detailLines.push(`<span class="di-added">＋ ${escapeHtml(x.ticker)}${qty}</span>`);
+  });
+  (diff.removed || []).forEach(x => {
+    const qty = x.qty != null ? ` × ${x.qty}` : '';
+    detailLines.push(`<span class="di-removed">－ ${escapeHtml(x.ticker)}${qty}</span>`);
+  });
+  (diff.changed || []).forEach(x => {
+    const sign = x.delta > 0 ? '▲' : '▼';
+    const absDelta = Math.abs(x.delta);
+    detailLines.push(`<span class="di-changed">${sign} ${escapeHtml(x.ticker)} ${x.old_qty} → ${x.new_qty}（${sign}${absDelta}）</span>`);
+  });
+
+  if (detailLines.length) {
+    details = `<div class="diff-detail-list">${detailLines.join('<br>')}</div>`;
+  }
+
+  return `<div class="diff-summary">${parts.join('')}</div>${details}`;
+}
+
+/* Build the agent prompt enriched with diff context */
+function buildAnalysisPrompt(savedPath, isChinese, diff, isNewVersion) {
+  let diffContext = '';
+  if (diff && isNewVersion) {
+    const addedList   = (diff.added  || []).map(x => `${x.ticker}${x.qty != null ? ` (${x.qty}股)` : ''}`).join(', ');
+    const removedList = (diff.removed|| []).map(x => `${x.ticker}${x.qty != null ? ` (${x.qty}股)` : ''}`).join(', ');
+    const changedList = (diff.changed|| []).map(x => {
+      const dir = x.delta > 0 ? '增加' : '減少';
+      return `${x.ticker} ${x.old_qty}→${x.new_qty}股（${dir}${Math.abs(x.delta)}股）`;
+    }).join(', ');
+
+    if (addedList || removedList || changedList) {
+      if (isChinese) {
+        diffContext = '\n\n【本次持股變化】\n';
+        if (addedList)   diffContext += `新開倉：${addedList}\n`;
+        if (removedList) diffContext += `已平倉：${removedList}\n`;
+        if (changedList) diffContext += `調整部位：${changedList}\n`;
+        diffContext += '\n請特別針對以上持股變化提供分析與建議（新開倉股票的進場時機、平倉決策是否合理、部位調整的風險評估）。';
+      } else {
+        diffContext = '\n\n[Holdings Changes Since Last Upload]\n';
+        if (addedList)   diffContext += `Newly opened: ${addedList}\n`;
+        if (removedList) diffContext += `Closed positions: ${removedList}\n`;
+        if (changedList) diffContext += `Position adjustments: ${changedList}\n`;
+        diffContext += '\nPlease provide targeted analysis on these changes (entry timing for new positions, whether closes were appropriate, risk assessment for adjustments).';
+      }
+    }
+  }
+
+  if (isChinese) {
+    return `我已將持股 CSV 檔案上傳至：${savedPath}。請讀取此檔案，提取我的持股資訊，並進行完整的投資組合分析，包含夏普值、波動率以及每檔股票的技術面與基本面展望。請以繁體中文回答。${diffContext}`;
+  } else {
+    return `I have uploaded my holdings CSV to: ${savedPath}. Please read this file, extract my holdings, and perform a complete portfolio analysis including Sharpe ratio, volatility, and technical/fundamental outlook for each stock.${diffContext}`;
+  }
+}
+
 function triggerCSVUpload() {
   if (isProcessing) return;
   document.getElementById('csv-file-input').click();
@@ -2175,7 +2377,7 @@ function showLanguageSelectionModal(data, onSelect) {
 function handleCSVSelected(event) {
   const file = event.target.files[0];
   if (!file) return;
-  
+
   if (!file.name.endsWith('.csv')) {
     showError('Only CSV files are supported.');
     event.target.value = '';
@@ -2188,7 +2390,7 @@ function handleCSVSelected(event) {
 
   const formData = new FormData();
   formData.append('file', file);
-  
+
   const sessionParam = currentSessionId ? `?session_id=${encodeURIComponent(currentSessionId)}` : '';
 
   fetch(`/upload${sessionParam}`, {
@@ -2203,27 +2405,41 @@ function handleCSVSelected(event) {
   })
   .then(data => {
     removeThinking();
-    
-    // Add custom styled success banner in chat
+
+    // Update latest-holdings state so button shows correct info
+    _latestHoldings = {
+      path: data.saved_path,
+      filename: data.filename,
+      tickers: data.tickers_detected || [],
+      total_rows: data.total_rows || 0,
+      date: new Date().toISOString().slice(0,10).replace(/-/g,''),
+    };
+    const lastBtn = document.getElementById('last-holdings-btn');
+    if (lastBtn) {
+      const d = _latestHoldings.date;
+      const dateStr = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`;
+      lastBtn.title = `使用上次持股（${data.filename}，${dateStr}，共 ${data.total_rows} 檔）`;
+      lastBtn.classList.add('visible');
+    }
+
+    // Build upload success banner
     const row = makeEl('div', 'msg-row system');
     const card = makeEl('div', 'system-card');
-    card.style.background = 'rgba(16,185,129,0.12)';
-    card.style.border = '1px solid rgba(16,185,129,0.25)';
-    card.style.color = '#34d399';
-    card.style.padding = '12px 16px';
-    card.style.borderRadius = '12px';
-    card.style.fontSize = '13px';
-    card.style.marginTop = '10px';
-    card.style.marginBottom = '10px';
-    card.style.maxWidth = '80%';
-    card.style.animation = 'fadeInUp 0.3s var(--ease) forwards';
-    
-    const tickersStr = data.tickers_detected.length > 0 ? ` (${data.tickers_detected.join(', ')} ...)` : '';
-    card.innerHTML = `📁 <strong>持股 CSV 上傳成功:</strong> ${escapeHtml(data.filename)}<br><span style="color: #94a3b8; font-size:12px; display:inline-block; margin-top:4px;">偵測到 ${data.total_rows} 行持股資料${tickersStr}，已儲存於 ${escapeHtml(data.saved_path)}。</span>`;
+    card.style.cssText = 'background:rgba(16,185,129,0.10);border:1px solid rgba(16,185,129,0.22);color:#34d399;padding:12px 16px;border-radius:12px;font-size:13px;margin:10px 0;max-width:80%;animation:fadeInUp 0.3s var(--ease) forwards;';
+
+    const tickersStr = (data.tickers_detected||[]).length > 0 ? ` (${data.tickers_detected.join(', ')} ...)` : '';
+    const versionLabel = data.is_new_version === false
+      ? ' · <span style="color:#94a3b8;font-size:11px;">⟳ 使用現有版本</span>'
+      : (data.version_id ? ` · <span style="color:#94a3b8;font-size:11px;">📌 新版本 ${escapeHtml(data.version_id)}</span>` : '');
+
+    card.innerHTML =
+      `📁 <strong>持股 CSV 上傳成功:</strong> ${escapeHtml(data.filename)}${versionLabel}<br>` +
+      `<span style="color:#94a3b8;font-size:12px;display:inline-block;margin-top:4px;">偵測到 ${data.total_rows} 行持股資料${tickersStr}，已儲存於 ${escapeHtml(data.saved_path)}。</span>` +
+      buildDiffHTML(data.diff, data.is_new_version);
+
     row.appendChild(card);
     appendMessage(row);
 
-    // Hide thinking indicator while user is selecting language in the modal
     removeThinking();
     setInputEnabled(true);
 
@@ -2232,16 +2448,11 @@ function handleCSVSelected(event) {
       setInputEnabled(false);
 
       const isChinese = (lang === 'zh');
-      let prompt = `I have uploaded my holdings CSV to: ${data.saved_path}. Please read this file, extract my holdings, and perform a complete portfolio analysis including Sharpe ratio, volatility, and technical/fundamental outlook for each stock.`;
-      if (isChinese) {
-        prompt = `我已將持股 CSV 檔案上傳至：${data.saved_path}。請讀取此檔案，提取我的持股資訊，並進行完整的投資組合分析，包含夏普值、波動率以及每檔股票的技術面與基本面展望。請以繁體中文回答。`;
-      }
-      
-      // Show request bubble
+      const prompt = buildAnalysisPrompt(data.saved_path, isChinese, data.diff, data.is_new_version);
+
       const userMsg = isChinese ? `分析我上傳的持股：${data.filename}` : `Analyze uploaded holdings: ${data.filename}`;
       addUserMessage(userMsg);
-      
-      // Reset query stats & stream state
+
       currentQuery.tools    = 0;
       currentQuery.layers   = new Map();
       currentQuery.startTime = Date.now();
@@ -2253,8 +2464,6 @@ function handleCSVSelected(event) {
       sb.innerHTML = '';
 
       showThinking();
-      
-      // Send request via WebSocket
       ws.send(JSON.stringify({ query: prompt }));
     });
   })
@@ -2301,6 +2510,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load existing scheduled jobs into sidebar
   loadScheduledJobs();
+
+  // Check for saved holdings history — show "上次持股" button if available
+  loadLatestHoldings();
 });
 
 /* ═══════════════════════════════════════════════════════════════
