@@ -17,9 +17,10 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +299,47 @@ def infer_investment_relevance(response_text: str) -> bool:
     """Lightweight heuristic: does the synthesized response say there's no relevance?"""
     no_relevance_markers = ["無明顯投資意涵", "無投資關聯性", "沒有明顯的投資關聯", "無明確的投資關聯"]
     return not any(marker in response_text for marker in no_relevance_markers)
+
+
+class AlertJudgement(BaseModel):
+    """Structured second-pass classification of an orchestrator alert response,
+    so the review queue has a queryable confidence/relevance field instead of
+    free text prose."""
+    relevant: bool = Field(description="Does this statement have clear investment relevance?")
+    confidence: Literal["high", "medium", "low"] = Field(
+        description="Confidence that this alert is worth a human's attention"
+    )
+    reasoning: str = Field(description="One or two sentence justification, in Traditional Chinese")
+
+
+def classify_alert_relevance(response_text: str) -> AlertJudgement:
+    """Run a cheap structured-output pass over an already-generated alert response.
+
+    Kept as an independent step after the orchestrator call (rather than folding
+    into INFLUENCER_ALERT_PROMPT_TEMPLATE) so the multi-agent prompt stays
+    untouched. Falls back to the keyword heuristic if structured output fails
+    for any reason (e.g. no API key), so this can never break the alert pipeline.
+    """
+    try:
+        from langchain.chat_models import init_chat_model
+        model_name = os.environ.get("SUBAGENT_MODEL", os.environ.get("AGENT_MODEL", "openai:gpt-5.2"))
+        model = init_chat_model(model_name)
+        structured_model = model.with_structured_output(AlertJudgement)
+        result = structured_model.invoke(
+            "請根據以下 AI 分析結果，判斷是否具投資關聯性、信心程度（高/中/低），並簡述理由：\n\n"
+            f"{response_text}"
+        )
+        if isinstance(result, AlertJudgement):
+            return result
+        return AlertJudgement(**result)
+    except Exception as e:
+        logger.warning(f"classify_alert_relevance structured output failed, falling back to heuristic: {e}")
+        relevant = infer_investment_relevance(response_text)
+        return AlertJudgement(
+            relevant=relevant,
+            confidence="medium" if relevant else "low",
+            reasoning="(結構化分類失敗，使用關鍵字 fallback)",
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

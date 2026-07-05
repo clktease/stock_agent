@@ -46,6 +46,11 @@ from influencer_tracking import (
     save_influencer_alert, load_influencer_alerts,
     _search_influencer_mentions, compute_url_set_hash,
     build_influencer_alert_prompt, infer_investment_relevance,
+    classify_alert_relevance,
+)
+from db import (
+    init_db, create_review_item, list_review_items, get_review_item,
+    update_review_item, review_stats,
 )
 
 load_dotenv(Path(__file__).parent / ".env")
@@ -619,6 +624,25 @@ async def _run_influencer_check(influencer: dict, force: bool = False) -> Option
             "executed_at": record["executed_at"],
         })
         print(f"✓ Influencer alert generated for {name}.")
+
+        # Structured second-pass classification -> pending review queue item,
+        # so a human can approve/reject/edit this alert (see db.py / /api/review/*).
+        try:
+            judgement = classify_alert_relevance(response_text)
+            review_item = create_review_item(
+                item_type="influencer_alert",
+                source_ref=influencer_id,
+                title=f"{name}：新發言/報導偵測",
+                ai_summary=response_text,
+                confidence=judgement.confidence,
+                ai_relevant=judgement.relevant,
+                source_urls=source_urls,
+                raw_payload={"reasoning": judgement.reasoning, "query_used": prompt},
+            )
+            await sse_broadcaster.broadcast({"type": "review_new", "item": review_item})
+        except Exception as e:
+            print(f"⚠ Failed to create review item for influencer alert: {e}")
+
         return record
     except Exception as e:
         await sse_broadcaster.broadcast({
@@ -925,6 +949,7 @@ async def _get_agent():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()
     print("⚙  Pre-warming Deep Agent…")
     try:
         await _get_agent()
@@ -964,6 +989,15 @@ app = FastAPI(title="Stock Analysis Deep Agent", lifespan=lifespan)
 _static_dir = Path(__file__).parent / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+# Vue3 review console (frontend/): built via `npm run build` in frontend/,
+# producing frontend/dist. Only mounted if that build exists, so a fresh
+# checkout without Node still runs the rest of the app fine.
+_console_dist_dir = Path(__file__).parent / "frontend" / "dist"
+if _console_dist_dir.exists():
+    app.mount("/console", StaticFiles(directory=str(_console_dist_dir), html=True), name="console")
+else:
+    print("ℹ Review console not built yet — run `npm install && npm run build` in frontend/ to enable /console")
 
 
 @app.get("/")
@@ -1326,6 +1360,65 @@ def _save_holdings_version(content_bytes: bytes, new_map: dict, tickers: list, f
     }
 
 
+ANOMALY_PCT_THRESHOLD = 0.30  # flag quantity changes bigger than this as review items
+
+
+async def _flag_holdings_anomalies(diff: Optional[dict], version_id: str) -> None:
+    """Turn notable holdings changes (new/closed positions, large qty swings)
+    into pending review-queue items. Confidence is a simple magnitude-based
+    rule here rather than an LLM call, since the signal (a % delta) is already
+    an objective number — an extra model call would just be re-describing it."""
+    if not diff:
+        return
+
+    for entry in diff.get("added", []):
+        ticker, qty = entry["ticker"], entry["qty"]
+        item = create_review_item(
+            item_type="holdings_anomaly",
+            source_ref=f"{version_id}:{ticker}",
+            title=f"{ticker}：新增持股",
+            ai_summary=f"偵測到新增持股 {ticker}，數量 {qty}。",
+            confidence="medium",
+            ai_relevant=True,
+            source_urls=[],
+            raw_payload={"change_type": "added", **entry},
+        )
+        await sse_broadcaster.broadcast({"type": "review_new", "item": item})
+
+    for entry in diff.get("removed", []):
+        ticker, qty = entry["ticker"], entry["qty"]
+        item = create_review_item(
+            item_type="holdings_anomaly",
+            source_ref=f"{version_id}:{ticker}",
+            title=f"{ticker}：出清持股",
+            ai_summary=f"偵測到持股 {ticker} 已全部出清（原數量 {qty}）。",
+            confidence="medium",
+            ai_relevant=True,
+            source_urls=[],
+            raw_payload={"change_type": "removed", **entry},
+        )
+        await sse_broadcaster.broadcast({"type": "review_new", "item": item})
+
+    for entry in diff.get("changed", []):
+        ticker, old_qty, new_qty, delta = entry["ticker"], entry["old_qty"], entry["new_qty"], entry["delta"]
+        pct = abs(delta) / abs(old_qty) if old_qty else float("inf")
+        if pct < ANOMALY_PCT_THRESHOLD:
+            continue
+        confidence = "high" if pct >= 1.0 else ("medium" if pct >= 0.5 else "low")
+        direction = "增加" if delta > 0 else "減少"
+        item = create_review_item(
+            item_type="holdings_anomaly",
+            source_ref=f"{version_id}:{ticker}",
+            title=f"{ticker}：持股大幅變動",
+            ai_summary=f"{ticker} 數量從 {old_qty} {direction}至 {new_qty}（變動 {pct:.0%}）。",
+            confidence=confidence,
+            ai_relevant=True,
+            source_urls=[],
+            raw_payload={"change_type": "changed", **entry, "pct_change": pct},
+        )
+        await sse_broadcaster.broadcast({"type": "review_new", "item": item})
+
+
 @app.post("/upload")
 async def upload_holdings(file: UploadFile = File(...), session_id: str = "default"):
     if not file.filename.endswith(".csv"):
@@ -1351,6 +1444,9 @@ async def upload_holdings(file: UploadFile = File(...), session_id: str = "defau
 
         # Version management
         version_result = _save_holdings_version(content, new_map, tickers, file.filename)
+
+        if version_result["is_new_version"]:
+            await _flag_holdings_anomalies(version_result["diff"], version_result["version_id"])
 
         return {
             "status": "success",
@@ -1382,6 +1478,54 @@ async def get_holdings_history():
     """Return all saved holdings versions (newest first)."""
     index = _load_holdings_index()
     return {"versions": list(reversed(index))}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Review Queue REST APIs
+#
+# Structured, queryable home for AI outputs (influencer alerts, holdings
+# anomalies) that need a human approve/reject/edit decision — the async
+# counterpart to the synchronous ask_clarification interrupt/resume flow
+# used inside /ws. See db.py for the underlying SQLite schema.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/review/items")
+async def api_list_review_items(status: Optional[str] = None, item_type: Optional[str] = None):
+    return {"items": list_review_items(status=status, item_type=item_type)}
+
+
+@app.get("/api/review/items/{item_id}")
+async def api_get_review_item(item_id: int):
+    item = get_review_item(item_id)
+    if not item:
+        return JSONResponse(status_code=404, content={"error": "Review item not found"})
+    return item
+
+
+@app.patch("/api/review/items/{item_id}")
+async def api_update_review_item(item_id: int, data: dict):
+    action = str(data.get("action", "")).strip()
+    if action not in ("approve", "reject", "edit"):
+        return JSONResponse(status_code=400, content={"error": "action must be one of: approve, reject, edit"})
+    if action == "edit" and not str(data.get("edited_text", "")).strip():
+        return JSONResponse(status_code=400, content={"error": "edited_text is required for the edit action"})
+
+    item = update_review_item(
+        item_id,
+        action=action,
+        edited_text=data.get("edited_text"),
+        note=data.get("note"),
+    )
+    if not item:
+        return JSONResponse(status_code=404, content={"error": "Review item not found"})
+
+    await sse_broadcaster.broadcast({"type": "review_updated", "item": item})
+    return item
+
+
+@app.get("/api/review/stats")
+async def api_review_stats():
+    return review_stats()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -28,3 +28,5 @@ unstructured
 beautifulsoup4
 # Scheduler
 apscheduler
+# Review queue DB
+sqlalchemy
