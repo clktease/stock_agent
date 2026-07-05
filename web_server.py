@@ -14,6 +14,7 @@
 import ast
 import asyncio
 import json
+import os
 import re
 import time
 import uuid
@@ -33,10 +34,19 @@ from langgraph.errors import GraphInterrupt
 try:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
     HAS_APSCHEDULER = True
 except ImportError:
     HAS_APSCHEDULER = False
     print("⚠ apscheduler not installed. Run: pip install apscheduler")
+
+from influencer_tracking import (
+    _load_influencers, _add_influencer, _remove_influencer, _set_influencer_enabled,
+    _update_influencer_check_state,
+    save_influencer_alert, load_influencer_alerts,
+    _search_influencer_mentions, compute_url_set_hash,
+    build_influencer_alert_prompt, infer_investment_relevance,
+)
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -516,6 +526,125 @@ async def execute_scheduled_job(job_id: str, prompt: str) -> None:
         })
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Influencer Tracking — background poll cycle
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _run_influencer_check(influencer: dict, force: bool = False) -> Optional[dict]:
+    """
+    Check one tracked influencer for genuinely new coverage since the last poll.
+    If new content is found (or `force=True`), synthesizes an investment-relevance
+    analysis via the orchestrator agent (same pattern as execute_scheduled_job),
+    persists the alert, and broadcasts it over SSE.
+
+    Returns the saved alert record, or None if no alert was generated.
+    """
+    name = influencer["name"]
+    influencer_id = influencer["id"]
+
+    results = await asyncio.get_event_loop().run_in_executor(
+        None, _search_influencer_mentions, name,
+        influencer.get("aliases"), influencer.get("context_tickers"),
+    )
+
+    urls = [r["url"] for r in results]
+    new_hash = compute_url_set_hash(urls)
+    prev_urls = set(influencer.get("last_seen_urls") or [])
+    prev_hash = influencer.get("last_seen_hash")
+
+    new_items = [r for r in results if r["url"] not in prev_urls]
+    is_first_check = prev_hash is None
+    has_new_content = bool(new_items) and new_hash != prev_hash
+
+    # Always advance the check-state, regardless of whether an alert fires.
+    _update_influencer_check_state(influencer_id, urls, new_hash)
+
+    if not force:
+        if is_first_check:
+            print(f"📋 Influencer baseline established for {name} ({len(results)} items) — no alert.")
+            return None
+        if not has_new_content:
+            return None
+    elif not new_items:
+        # Forced check with nothing "new" — fall back to current results so the
+        # user gets an immediate answer instead of a no-op.
+        new_items = results
+
+    if not new_items:
+        return None
+
+    context_tickers = influencer.get("context_tickers") or []
+    prompt = build_influencer_alert_prompt(name, new_items, context_tickers)
+
+    try:
+        agent = await _get_agent()
+    except Exception as e:
+        await sse_broadcaster.broadcast({
+            "type": "celebrity_alert_error", "influencer_id": influencer_id,
+            "name": name, "message": f"Agent init failed: {e}",
+        })
+        return None
+
+    await sse_broadcaster.broadcast({
+        "type": "celebrity_check_start",
+        "influencer_id": influencer_id,
+        "name": name,
+        "started_at": datetime.now(tz=timezone.utc).isoformat(),
+    })
+
+    try:
+        session = session_manager.new_session()
+        config = {
+            "configurable": {"thread_id": f"influencer_{influencer_id}_{time.time()}"},
+            "recursion_limit": 100,
+        }
+        result = await agent.ainvoke({"messages": [("human", prompt)]}, config=config)
+        response_text = _extract_response(result)
+        session_manager.add_exchange(session.session_id, prompt, response_text)
+
+        has_relevance = infer_investment_relevance(response_text)
+        source_urls = [item["url"] for item in new_items]
+        record = save_influencer_alert(
+            influencer_id, name, prompt, source_urls, has_relevance, response_text,
+        )
+
+        await sse_broadcaster.broadcast({
+            "type": "celebrity_alert",
+            "influencer_id": influencer_id,
+            "name": name,
+            "has_investment_relevance": has_relevance,
+            "summary_snippet": response_text[:200],
+            "result": response_text,
+            "source_urls": source_urls,
+            "executed_at": record["executed_at"],
+        })
+        print(f"✓ Influencer alert generated for {name}.")
+        return record
+    except Exception as e:
+        await sse_broadcaster.broadcast({
+            "type": "celebrity_alert_error", "influencer_id": influencer_id,
+            "name": name, "message": str(e),
+        })
+        return None
+
+
+async def run_influencer_poll_cycle() -> None:
+    """Called by APScheduler on a fixed interval (celebrity_monitor_cycle).
+    Sequentially checks all enabled tracked influencers for new content —
+    sequential (not gather) to avoid bursting Tavily and to bound LLM cost."""
+    influencers = _load_influencers()
+    enabled = [i for i in influencers if i.get("enabled", True)]
+    if not enabled:
+        return
+    print(f"👀 Influencer poll cycle: checking {len(enabled)} tracked figure(s)...")
+    for influencer in enabled:
+        try:
+            await _run_influencer_check(influencer)
+        except Exception as e:
+            print(f"⚠ Influencer check failed for {influencer.get('name')}: {e}")
+        await asyncio.sleep(2)
+
+
 def classify_tool(name: str) -> str:
     if name == "task":
         return "SUBAGENT"
@@ -806,6 +935,20 @@ async def lifespan(app: FastAPI):
     # Start cron scheduler
     scheduler_manager.start()
 
+    # Register the system-level influencer monitoring cycle (distinct from
+    # user-authored jobs.json cron jobs — config-driven via env var, not
+    # editable through /schedule*).
+    if scheduler_manager.scheduler:
+        poll_minutes = int(os.environ.get("INFLUENCER_POLL_INTERVAL_MINUTES", "30"))
+        scheduler_manager.scheduler.add_job(
+            run_influencer_poll_cycle,
+            trigger=IntervalTrigger(minutes=poll_minutes),
+            id="celebrity_monitor_cycle",
+            replace_existing=True,
+            max_instances=1,
+        )
+        print(f"✓ Influencer monitor cycle registered (every {poll_minutes} min)")
+
     yield
 
     # Shutdown
@@ -940,6 +1083,74 @@ async def get_schedule_results(job_id: str, limit: int = 10):
     """Get execution history for a scheduled job."""
     results = load_scheduled_results(job_id, limit=limit)
     return {"job_id": job_id, "results": results}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Influencer Tracking REST APIs
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/influencers")
+async def create_influencer(data: dict):
+    """Add (or update) a public figure to the background-monitoring watchlist."""
+    name = str(data.get("name", "")).strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "name is required"})
+    aliases = data.get("aliases") or []
+    context_tickers = data.get("context_tickers") or []
+    entry = _add_influencer(name, aliases, context_tickers)
+    return {"status": "created", "influencer": entry}
+
+
+@app.get("/influencers")
+async def list_influencers():
+    """List everyone currently tracked."""
+    return {"influencers": _load_influencers()}
+
+
+@app.delete("/influencers/{influencer_id}")
+async def delete_influencer(influencer_id: str):
+    """Stop tracking a public figure."""
+    ok = _remove_influencer(influencer_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "Influencer not found"})
+    return {"status": "deleted", "influencer_id": influencer_id}
+
+
+@app.patch("/influencers/{influencer_id}")
+async def update_influencer(influencer_id: str, data: dict):
+    """Pause or resume background monitoring for a tracked influencer."""
+    enabled = data.get("enabled")
+    if enabled is None:
+        return JSONResponse(status_code=400, content={"error": "enabled field required"})
+    entry = _set_influencer_enabled(influencer_id, bool(enabled))
+    if not entry:
+        return JSONResponse(status_code=404, content={"error": "Influencer not found"})
+    return {"status": "updated", "influencer": entry}
+
+
+@app.get("/influencers/{influencer_id}/alerts")
+async def get_influencer_alerts(influencer_id: str, limit: int = 10):
+    """Get alert history for a tracked influencer."""
+    alerts = load_influencer_alerts(influencer_id, limit=limit)
+    return {"influencer_id": influencer_id, "alerts": alerts}
+
+
+@app.post("/influencers/{influencer_id}/check-now")
+async def check_influencer_now(influencer_id: str, data: dict):
+    """
+    Manually trigger an immediate check for a tracked influencer, instead of
+    waiting for the next background poll cycle. `force` (default true) skips
+    the "no new content" dedup gate so the caller gets an immediate result.
+    """
+    influencers = _load_influencers()
+    target = next((i for i in influencers if i["id"] == influencer_id), None)
+    if not target:
+        return JSONResponse(status_code=404, content={"error": "Influencer not found"})
+    force = bool(data.get("force", True))
+    record = await _run_influencer_check(target, force=force)
+    if record is None:
+        return {"status": "no_new_content", "influencer_id": influencer_id}
+    return {"status": "alert_generated", "alert": record}
 
 
 _uploads_dir = Path(__file__).parent / "uploads"

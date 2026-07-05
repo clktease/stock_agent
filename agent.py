@@ -45,6 +45,9 @@ load_dotenv(Path(__file__).parent / ".env")
 from deepagents import create_deep_agent
 from skills import ALL_SKILLS
 from rag_tools import RAG_TOOLS, preload_vectorstores, search_investment_knowledge, search_market_history
+from influencer_tracking import (
+    track_influencer, untrack_influencer, list_tracked_influencers, get_recent_statements,
+)
 
 console = Console()
 
@@ -324,8 +327,9 @@ NEWS_SENTIMENT_SUBAGENT = {
     "description": (
         "A specialist in news analysis and market sentiment. Use this sub-agent when you need to: "
         "search for recent news about a company or sector, assess market sentiment, "
-        "identify catalysts (earnings, product launches, regulatory events), or gauge "
-        "overall market mood."
+        "identify catalysts (earnings, product launches, regulatory events), gauge "
+        "overall market mood, or analyze whether a public figure's/influencer's recent "
+        "statement or social media post has investment-relevant implications."
     ),
     "system_prompt": (
         "You are an expert market analyst specializing in news and sentiment analysis. "
@@ -336,7 +340,13 @@ NEWS_SENTIMENT_SUBAGENT = {
         "4. Highlight any risks or red flags mentioned in recent news.\n"
         "5. Summarize your findings in a concise market intelligence report.\n"
         "Focus on facts. Distinguish between confirmed news and speculation.\n"
-        "6. Always respond in the same language as the incoming query/instruction (e.g. if the user asks or delegates in Traditional Chinese, reply in Traditional Chinese)."
+        "6. When analyzing a public figure's/influencer's statement or social post (via "
+        "get_recent_statements or a tracked-influencer alert), clearly separate confirmed direct "
+        "quotes from media interpretation, only assert investment relevance when it is genuinely "
+        "clear (say so plainly when it isn't), and always flag that single-statement-driven signals "
+        "can be noisy, unverified, or manipulated (e.g. meme-stock dynamics) — never treat one "
+        "person's post as guaranteed market-moving on its own.\n"
+        "7. Always respond in the same language as the incoming query/instruction (e.g. if the user asks or delegates in Traditional Chinese, reply in Traditional Chinese)."
     ),
 }
 
@@ -377,8 +387,12 @@ You have access to:
 2. **Specialist Sub-agents**: Delegate deep-dive analysis to your team:
    - `technical-analyst`: Chart patterns, indicators, price signals
    - `fundamental-analyst`: Financial statements, valuation ratios, business quality
-   - `news-sentiment-analyst`: News, catalysts, market sentiment
+   - `news-sentiment-analyst`: News, catalysts, market sentiment, and influencer/public-figure statement analysis
    - `portfolio-manager`: Multi-stock comparison, portfolio construction, risk metrics
+3. **Influencer Tracking**: Use `track_influencer` / `untrack_influencer` / `list_tracked_influencers`
+   directly (no need to delegate) when the user wants to start/stop/list background monitoring of a
+   public figure's statements. Use `get_recent_statements` for one-off questions about what someone
+   has recently said, or delegate to `news-sentiment-analyst` for a deeper investment-relevance analysis.
 
 ## How to Respond
 For simple queries (e.g., "What is AAPL's current price?"):
@@ -423,6 +437,11 @@ Always structure comprehensive analyses as:
 - This is for educational purposes – not personalized financial advice.
 - Use the `ask_clarification` tool to ask for clarification when a query is ambiguous, e.g. when the user asks to analyze the "stock market" (分析股市) but does not specify whether they want US stocks (美股), Taiwan stocks (台股), or Korean stocks (韓股).
 - If a ticker is not found, suggest alternatives or ask for clarification.
+- When analysis is triggered by a single public figure's/influencer's statement or social media post
+  (whether from `get_recent_statements`, a tracked-influencer background alert, or a direct user
+  question about what someone said), always flag that single-statement-driven signals can be noisy,
+  unverified, or subject to manipulation (e.g. meme-stock dynamics) — do not present them as
+  guaranteed market-moving events, and explicitly say so when there is no clear investment relevance.
 """
 
 
@@ -572,7 +591,10 @@ async def build_agent(with_mcp: bool = False):
         return json.dumps(_get_sec_filing_summary(ticker, form_type), ensure_ascii=False, default=str)
 
     # -- Global tools (orchestrator + all sub-agents) ---------------------------
-    global_tools: list = [compare_stocks, screen_stocks, ask_clarification]
+    global_tools: list = [
+        compare_stocks, screen_stocks, ask_clarification,
+        track_influencer, untrack_influencer, list_tracked_influencers,
+    ]
 
     if os.environ.get("TAVILY_API_KEY"):
         try:
@@ -597,7 +619,7 @@ async def build_agent(with_mcp: bool = False):
     fundamental_tools = [get_fundamental_data, get_sec_filing_summary,
                          search_investment_knowledge]
     sentiment_tools   = ([search_news] if search_news else []) + [get_economic_indicators,
-                         search_market_history]
+                         search_market_history, get_recent_statements]
     portfolio_tools   = [calculate_portfolio_metrics, compare_stocks,
                          get_economic_indicators, search_market_history,
                          read_holdings_csv]
@@ -633,7 +655,7 @@ async def build_agent(with_mcp: bool = False):
              get_fundamental_data, calculate_portfolio_metrics,
              get_economic_indicators, get_sec_filing_summary,
              search_investment_knowledge, search_market_history,
-             read_holdings_csv]
+             read_holdings_csv, get_recent_statements]
             + global_tools
         )
     }.values())   # deduplicate by identity

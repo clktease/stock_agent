@@ -1063,6 +1063,141 @@
       font-size: 11px; color: var(--text-muted); opacity: 0.6;
     }
 
+    /* ─── Influencer Tracking Sidebar (mirrors Schedule Sidebar) ──── */
+    #influencer-sidebar {
+      border-top: 1px solid var(--panel-border);
+      flex-shrink: 0;
+    }
+    .influencer-sidebar-header {
+      padding: 10px 14px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .influencer-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .influencer-title .influencer-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #f43f5e;
+    }
+    .influencer-title .influencer-dot.active {
+      background: #22c55e;
+      animation: wsGlow 2s infinite;
+    }
+    .add-influencer-btn {
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s var(--ease);
+    }
+    .add-influencer-btn:hover {
+      border-color: rgba(244,63,94,0.4);
+      background: rgba(244,63,94,0.08);
+      color: #fb7185;
+    }
+    .influencer-add-form {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      padding: 0 14px 10px;
+    }
+    .influencer-add-form.visible { display: flex; }
+    .influencer-add-form input {
+      background: var(--input-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 11px;
+      padding: 6px 8px;
+    }
+    .influencer-add-form button {
+      font-size: 11px; font-weight: 600;
+      padding: 5px 0;
+      border-radius: 6px;
+      border: 1px solid rgba(244,63,94,0.4);
+      background: rgba(244,63,94,0.1);
+      color: #fb7185;
+      cursor: pointer;
+    }
+
+    .influencer-list {
+      overflow-y: auto;
+      max-height: 260px;
+      padding: 0 10px 8px;
+    }
+
+    .influencer-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
+      animation: fadeInUp 0.3s var(--ease);
+    }
+    .influencer-card:hover { background: rgba(255,255,255,0.05); border-color: rgba(244,63,94,0.3); }
+    .influencer-card.enabled  { border-left: 3px solid #22c55e; }
+    .influencer-card.disabled { border-left: 3px solid #ef4444; opacity: 0.7; }
+
+    .influencer-card-top {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 5px;
+    }
+    .influencer-name-badge {
+      font-size: 11px; font-weight: 700;
+      padding: 2px 7px; border-radius: 6px;
+      background: rgba(244,63,94,0.15);
+      color: #fb7185;
+      flex-shrink: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 120px;
+    }
+    .influencer-tickers {
+      flex: 1;
+      font-size: 10px; color: var(--text-muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .influencer-last-check {
+      font-size: 10px; color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .influencer-actions {
+      display: flex; gap: 5px; margin-top: 6px;
+    }
+    .influencer-action-btn {
+      flex: 1;
+      font-size: 10px; font-weight: 600;
+      padding: 3px 0;
+      border-radius: 6px;
+      border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s var(--ease);
+    }
+    .influencer-action-btn:hover { background: rgba(255,255,255,0.07); color: var(--text-primary); }
+    .influencer-action-btn.history:hover { border-color: rgba(99,102,241,0.4); color: #a5b4fc; }
+    .influencer-action-btn.toggle.on:hover  { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+    .influencer-action-btn.toggle.off:hover { border-color: rgba(34,197,94,0.4); color: #4ade80; }
+    .influencer-action-btn.del:hover { border-color: rgba(239,68,68,0.4); color: #fca5a5; background: rgba(239,68,68,0.05); }
+
+    .influencer-empty {
+      text-align: center; padding: 16px 10px;
+      font-size: 11px; color: var(--text-muted); opacity: 0.6;
+    }
+
     /* ─── Schedule Confirm Modal ─────────────────────────────────── */
     #sched-modal-overlay {
       position: fixed; inset: 0;
@@ -1401,6 +1536,25 @@
         </div>
         <div class="sched-list" id="sched-list">
           <div class="sched-empty" id="sched-empty">⏰ 尚無定時任務<br>在聊天框輸入「每天晚上九點做美股分析」即可建立</div>
+        </div>
+      </div>
+
+      <!-- ── Influencer Tracking Section ── -->
+      <div id="influencer-sidebar">
+        <div class="influencer-sidebar-header">
+          <div class="influencer-title">
+            <div class="influencer-dot" id="influencer-status-dot"></div>
+            名人追蹤
+          </div>
+          <button class="add-influencer-btn" id="add-influencer-btn" title="新增追蹤" onclick="toggleInfluencerAddForm()">＋</button>
+        </div>
+        <div class="influencer-add-form" id="influencer-add-form">
+          <input type="text" id="influencer-name-input" placeholder="姓名，例如 Elon Musk" />
+          <input type="text" id="influencer-tickers-input" placeholder="相關股票代號（選填，逗號分隔）" />
+          <button onclick="submitAddInfluencer()">＋ 開始追蹤</button>
+        </div>
+        <div class="influencer-list" id="influencer-list">
+          <div class="influencer-empty" id="influencer-empty">🗣️ 尚無追蹤名人<br>在聊天框輸入「幫我追蹤馬斯克的言論」即可建立</div>
         </div>
       </div>
 
@@ -2511,6 +2665,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load existing scheduled jobs into sidebar
   loadScheduledJobs();
 
+  // Load tracked influencers into sidebar
+  loadInfluencers();
+
   // Check for saved holdings history — show "上次持股" button if available
   loadLatestHoldings();
 });
@@ -2561,6 +2718,31 @@ function handleSSEMessage(msg) {
     const dot = document.getElementById('sched-status-dot');
     if (dot) dot.classList.remove('active');
     showToast('error', '⚠️', '定時任務失敗', msg.message || '未知錯誤');
+  }
+
+  if (msg.type === 'celebrity_check_start') {
+    const dot = document.getElementById('influencer-status-dot');
+    if (dot) dot.classList.add('active');
+  }
+
+  if (msg.type === 'celebrity_alert') {
+    const dot = document.getElementById('influencer-status-dot');
+    if (dot) dot.classList.remove('active');
+
+    showToast(
+      msg.has_investment_relevance ? 'success' : 'info',
+      '🗣️',
+      `${msg.name} — 新言論警示`,
+      msg.summary_snippet || '偵測到新內容，點擊查看分析。',
+      () => openInfluencerAlerts(msg.influencer_id, msg.name),
+    );
+    loadInfluencers();
+  }
+
+  if (msg.type === 'celebrity_alert_error') {
+    const dot = document.getElementById('influencer-status-dot');
+    if (dot) dot.classList.remove('active');
+    showToast('error', '⚠️', `${msg.name || '追蹤對象'} 檢查失敗`, msg.message || '未知錯誤');
   }
 }
 
@@ -2794,6 +2976,202 @@ async function deleteJob(jobId) {
   } catch (e) {
     showToast('error', '⚠️', '刪除失敗', String(e));
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Influencer Tracking Sidebar
+═══════════════════════════════════════════════════════════════ */
+function toggleInfluencerAddForm() {
+  document.getElementById('influencer-add-form').classList.toggle('visible');
+}
+
+async function submitAddInfluencer() {
+  const nameInput = document.getElementById('influencer-name-input');
+  const tickersInput = document.getElementById('influencer-tickers-input');
+  const name = nameInput.value.trim();
+  if (!name) return;
+  const context_tickers = tickersInput.value.trim()
+    ? tickersInput.value.split(',').map(t => t.trim()).filter(Boolean)
+    : [];
+
+  try {
+    const res = await fetch('/influencers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, context_tickers }),
+    });
+    const data = await res.json();
+    if (data.status === 'created') {
+      nameInput.value = '';
+      tickersInput.value = '';
+      document.getElementById('influencer-add-form').classList.remove('visible');
+      showToast('success', '🗣️', '開始追蹤！', `${name} — 首次檢查只會建立基準，之後有新內容才會通知。`);
+      loadInfluencers();
+    } else {
+      showToast('error', '⚠️', '新增失敗', JSON.stringify(data));
+    }
+  } catch (e) {
+    showToast('error', '⚠️', '新增失敗', String(e));
+  }
+}
+
+async function loadInfluencers() {
+  try {
+    const res = await fetch('/influencers');
+    const data = await res.json();
+    renderInfluencerSidebar(data.influencers || []);
+  } catch (e) {
+    // Silently fail
+  }
+}
+
+let _influencerNameById = {};
+
+function renderInfluencerSidebar(influencers) {
+  const list  = document.getElementById('influencer-list');
+  const empty = document.getElementById('influencer-empty');
+
+  list.querySelectorAll('.influencer-card').forEach(c => c.remove());
+  _influencerNameById = {};
+  influencers.forEach(inf => { _influencerNameById[inf.id] = inf.name; });
+
+  if (influencers.length === 0) {
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  influencers.forEach(inf => {
+    const card = makeEl('div', `influencer-card ${inf.enabled ? 'enabled' : 'disabled'}`);
+    card.dataset.influencerId = inf.id;
+
+    const lastCheck = inf.last_checked_at
+      ? new Date(inf.last_checked_at).toLocaleString('zh-TW', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})
+      : '尚未檢查';
+    const tickers = (inf.context_tickers || []).join(', ') || '未指定標的';
+
+    card.innerHTML = `
+      <div class="influencer-card-top">
+        <span class="influencer-name-badge" title="${escapeHtml(inf.name)}">🗣️ ${escapeHtml(inf.name)}</span>
+        <span class="influencer-tickers">${escapeHtml(tickers)}</span>
+      </div>
+      <div class="influencer-last-check">最後檢查：${lastCheck} · 警示 ${inf.alert_count || 0} 次</div>
+      <div class="influencer-actions">
+        <button class="influencer-action-btn history" onclick="openInfluencerAlerts('${inf.id}')">📋 警示</button>
+        <button class="influencer-action-btn" onclick="checkInfluencerNow('${inf.id}')">🔍 立即檢查</button>
+        <button class="influencer-action-btn toggle ${inf.enabled ? 'on' : 'off'}" onclick="toggleInfluencer('${inf.id}', ${!inf.enabled})">${inf.enabled ? '⏸ 暫停' : '▶ 啟用'}</button>
+        <button class="influencer-action-btn del" onclick="deleteInfluencer('${inf.id}')">🗑</button>
+      </div>
+    `;
+
+    list.appendChild(card);
+  });
+}
+
+async function toggleInfluencer(influencerId, enabled) {
+  try {
+    await fetch(`/influencers/${influencerId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    loadInfluencers();
+    showToast('info', enabled ? '▶' : '⏸', enabled ? '追蹤已啟用' : '追蹤已暫停', '');
+  } catch (e) {
+    showToast('error', '⚠️', '操作失敗', String(e));
+  }
+}
+
+async function deleteInfluencer(influencerId) {
+  if (!confirm('確定要停止追蹤此對象？')) return;
+  try {
+    await fetch(`/influencers/${influencerId}`, { method: 'DELETE' });
+    loadInfluencers();
+    showToast('info', '🗑', '已停止追蹤', '');
+  } catch (e) {
+    showToast('error', '⚠️', '刪除失敗', String(e));
+  }
+}
+
+async function checkInfluencerNow(influencerId) {
+  showToast('info', '🔍', '檢查中…', '正在搜尋最新內容並分析，請稍候。');
+  try {
+    const res = await fetch(`/influencers/${influencerId}/check-now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force: true }),
+    });
+    const data = await res.json();
+    loadInfluencers();
+    if (data.status === 'alert_generated') {
+      showToast('success', '🗣️', '分析完成！', '點擊查看報告', () => {
+        openInfluencerAlerts(influencerId);
+      });
+    } else if (data.status === 'no_new_content') {
+      showToast('info', 'ℹ️', '無新內容', '目前沒有找到可分析的新報導。');
+    } else {
+      showToast('error', '⚠️', '檢查失敗', JSON.stringify(data));
+    }
+  } catch (e) {
+    showToast('error', '⚠️', '檢查失敗', String(e));
+  }
+}
+
+async function openInfluencerAlerts(influencerId, name) {
+  name = name || _influencerNameById[influencerId] || '';
+  try {
+    const res = await fetch(`/influencers/${influencerId}/alerts?limit=10`);
+    const data = await res.json();
+
+    const alerts = data.alerts || [];
+    if (alerts.length === 0) {
+      showToast('info', 'ℹ️', '尚無警示記錄', `${name || '此對象'} 尚未產生任何警示。`);
+      return;
+    }
+
+    openInfluencerAlertModal(name, alerts);
+  } catch (e) {
+    showToast('error', '⚠️', '載入失敗', String(e));
+  }
+}
+
+let _currentInfluencerAlerts = [];
+
+function openInfluencerAlertModal(name, alerts) {
+  _currentInfluencerAlerts = alerts;
+
+  const tabsEl = document.getElementById('result-hist-tabs');
+  tabsEl.innerHTML = '';
+  alerts.forEach((a, i) => {
+    const tab = makeEl('button', `result-hist-tab ${i === 0 ? 'active' : ''}`);
+    const d = new Date(a.executed_at);
+    tab.textContent = d.toLocaleString('zh-TW', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    tab.onclick = () => {
+      tabsEl.querySelectorAll('.result-hist-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderInfluencerAlertContent(i, name);
+    };
+    tabsEl.appendChild(tab);
+  });
+
+  renderInfluencerAlertContent(0, name);
+  document.getElementById('result-modal-overlay').classList.add('visible');
+}
+
+function renderInfluencerAlertContent(idx, name) {
+  const a = _currentInfluencerAlerts[idx];
+  if (!a) return;
+
+  document.getElementById('result-modal-title').textContent = `🗣️ ${name || a.name} — 言論警示`;
+
+  const d = new Date(a.executed_at);
+  const relevance = a.has_investment_relevance ? '有投資關聯性' : '無明顯投資關聯性';
+  document.getElementById('result-modal-meta').innerHTML = `
+    <span>🕐 執行時間：${d.toLocaleString('zh-TW')}</span>
+    <span>📊 ${escapeHtml(relevance)}</span>
+  `;
+
+  document.getElementById('result-modal-body').innerHTML = marked.parse(a.response_text || '（無內容）');
 }
 
 /* ═══════════════════════════════════════════════════════════════
