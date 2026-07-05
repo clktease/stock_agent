@@ -18,7 +18,10 @@
       "Bash(MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-20.04 -e bash -lc ' *)",
       "Bash(MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-20.04 -e bash -lc 'cd /mnt/f/deep_agent && /home/clk/anaconda3/envs/stock-agent/bin/python -c \" *)",
       "Bash(MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-20.04 -e bash -lc 'cd /mnt/f/deep_agent && cat uploads/holdings_index.json 2>/dev/null || echo \"\\(no index file yet\\)\"')",
-      "Bash(MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-20.04 -e bash -lc 'cd /mnt/f/deep_agent && git status --short')"
+      "Bash(MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-20.04 -e bash -lc 'cd /mnt/f/deep_agent && git status --short')",
+      "Bash(find /c/Users/james/.claude -iname \"SKILL.md\" 2>/dev/null | head -5)",
+      "Read(//c/Users/james/.claude/**)",
+      "Bash(MSYS_NO_PATHCONV=1 find \"/c/Users/james/.claude\" -iname \"*.md\" 2>/dev/null | grep -i skill | head -20)"
     ]
   }
 }

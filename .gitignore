@@ -34,4 +34,6 @@ review.db
 frontend/node_modules/
 frontend/dist/
 
-
+# Machine-specific Claude Code skill (hardcoded WSL/conda paths for this box)
+.claude/skills/verify-env/
+.claude/settings.json
