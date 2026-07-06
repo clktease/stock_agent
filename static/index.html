@@ -1744,7 +1744,8 @@ const currentQuery   = { tools: 0, layers: new Map(), startTime: null };
 function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   try {
-    ws = new WebSocket('ws://localhost:8000/ws');
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${wsProtocol}//${location.host}/ws`);
   } catch(e) {
     scheduleReconnect();
     return;
