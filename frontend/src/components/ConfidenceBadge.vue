@@ -7,26 +7,30 @@ defineProps({ confidence: { type: String, required: true } })
 </template>
 
 <style scoped>
+/* stamp-style badge — matches the routing-slip ticket stamps in the chat console */
 .badge {
   display: inline-block;
-  padding: 2px 10px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  padding: 1px 7px;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+  font-size: 0.68rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
   white-space: nowrap;
+  transform: rotate(-2deg);
 }
 .badge.high {
-  background: color-mix(in srgb, #ef4444 18%, transparent);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--loss) 16%, transparent);
+  color: var(--loss);
 }
 .badge.medium {
-  background: color-mix(in srgb, #f59e0b 18%, transparent);
-  color: #f59e0b;
+  background: var(--brass-dim);
+  color: var(--brass-bright);
 }
 .badge.low {
-  background: color-mix(in srgb, #6366f1 18%, transparent);
-  color: #818cf8;
+  background: color-mix(in srgb, var(--ink-dim) 16%, transparent);
+  color: var(--ink-dim);
 }
 </style>

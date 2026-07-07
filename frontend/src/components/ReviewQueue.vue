@@ -44,7 +44,7 @@ onMounted(load)
 <template>
   <section>
     <div class="toolbar">
-      <h2>待審佇列（{{ filtered.length }}）</h2>
+      <h2>待審佇列<span class="count">{{ filtered.length }}</span></h2>
       <select v-model="filterType">
         <option value="">全部類型</option>
         <option value="influencer_alert">網紅發言警示</option>
@@ -64,16 +64,37 @@ onMounted(load)
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
-h2 { margin: 0; font-size: 1.1rem; }
+h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1.25rem;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+h2 .count {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--brass-bright);
+  background: var(--brass-dim);
+  border-radius: 3px;
+  padding: 2px 7px;
+}
 select {
-  background: var(--surface);
-  color: inherit;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 4px;
   padding: 6px 10px;
 }
-.hint { opacity: 0.6; }
-.error { color: #ef4444; }
+.hint { color: var(--ink-dim); font-size: 0.9rem; }
+.error { color: var(--loss); }
 </style>

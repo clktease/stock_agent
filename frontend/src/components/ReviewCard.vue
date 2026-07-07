@@ -67,10 +67,11 @@ async function act(action) {
 <style scoped>
 .card {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-left: 2px solid var(--brass);
+  border-radius: 4px;
   padding: 16px 18px;
   margin-bottom: 14px;
-  background: var(--surface);
+  background: var(--surface-2);
 }
 header {
   display: flex;
@@ -80,46 +81,53 @@ header {
 }
 h3 {
   margin: 0;
-  font-size: 1rem;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1.05rem;
 }
 .type {
   margin: 4px 0 10px;
-  font-size: 0.8rem;
-  opacity: 0.6;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
 }
 .summary {
   white-space: pre-wrap;
-  line-height: 1.5;
+  line-height: 1.55;
   margin: 0 0 10px;
 }
 textarea {
   width: 100%;
   box-sizing: border-box;
   margin-bottom: 10px;
-  font-family: inherit;
+  font-family: var(--font-body);
   padding: 8px;
-  border-radius: 8px;
+  border-radius: 3px;
   border: 1px solid var(--border);
   background: var(--bg);
-  color: inherit;
+  color: var(--ink);
 }
 .sources {
   list-style: none;
   padding: 0;
   margin: 0 0 10px;
-  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
 }
 .sources a {
-  color: var(--accent);
+  color: var(--brass-bright);
 }
 .note {
   width: 100%;
   box-sizing: border-box;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: 3px;
   border: 1px solid var(--border);
   background: var(--bg);
-  color: inherit;
+  color: var(--ink);
   margin-bottom: 10px;
 }
 .actions {
@@ -128,15 +136,20 @@ textarea {
 }
 button {
   border: 1px solid var(--border);
-  background: var(--bg);
-  color: inherit;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
   padding: 6px 14px;
-  border-radius: 8px;
+  border-radius: 3px;
   cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
+button:hover:not(:disabled) { border-color: var(--brass); background: var(--brass-dim); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.approve { color: #22c55e; }
-button.reject { color: #ef4444; }
-.error { color: #ef4444; font-size: 0.85rem; }
+button.approve { color: var(--gain); border-color: color-mix(in srgb, var(--gain) 40%, transparent); }
+button.approve:hover:not(:disabled) { background: color-mix(in srgb, var(--gain) 12%, transparent); border-color: var(--gain); }
+button.reject { color: var(--loss); border-color: color-mix(in srgb, var(--loss) 40%, transparent); }
+button.reject:hover:not(:disabled) { background: color-mix(in srgb, var(--loss) 12%, transparent); border-color: var(--loss); }
+.error { color: var(--loss); font-size: 0.85rem; }
 </style>

@@ -30,7 +30,7 @@ onMounted(load)
 
 <template>
   <section>
-    <h2>審核歷史</h2>
+    <h2><span class="mark">§</span> 審核歷史</h2>
     <p v-if="loading" class="hint">載入中…</p>
     <template v-else>
       <div v-for="(list, status) in groups" :key="status" class="group">
@@ -58,12 +58,39 @@ onMounted(load)
 </template>
 
 <style scoped>
+h2 {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 1.25rem;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 20px;
+}
+h2 .mark {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-weight: 600;
+  font-size: 0.65rem;
+  color: var(--bg);
+  background: var(--brass);
+  border-radius: 3px;
+  padding: 2px 5px;
+}
 .group { margin-bottom: 24px; }
-h3 { font-size: 0.95rem; opacity: 0.8; }
-.hint { opacity: 0.6; }
+h3 {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.hint { color: var(--ink-dim); font-size: 0.9rem; }
 .row {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 4px;
   margin-bottom: 8px;
   overflow: hidden;
 }
@@ -73,19 +100,21 @@ h3 { font-size: 0.95rem; opacity: 0.8; }
   align-items: center;
   padding: 10px 14px;
   cursor: pointer;
-  background: var(--surface);
+  background: var(--surface-2);
 }
+.row-header:hover { background: var(--brass-dim); }
 .detail {
   padding: 10px 14px;
   border-top: 1px solid var(--border);
 }
 .text { white-space: pre-wrap; line-height: 1.5; }
-.note { opacity: 0.75; font-size: 0.85rem; }
+.note { color: var(--ink-dim); font-size: 0.85rem; }
 .timeline {
   list-style: none;
   padding: 0;
   margin: 8px 0 0;
-  font-size: 0.8rem;
-  opacity: 0.75;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--ink-dim);
 }
 </style>
