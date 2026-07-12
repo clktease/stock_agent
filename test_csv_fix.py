@@ -33,8 +33,15 @@ expected = {
     'NVDA': 4.01,  'QQQ': 7.06,   'SOXX': 5.86,
     'TSLA': 5.95,  'TSM': 12.48,  'VOO': 20.00,
 }
+mismatches = []
 for h in result.get('holdings', []):
     w = h.get('weight', 0) * 100
     exp = expected.get(h['ticker'], 0)
     ok = abs(w - exp) < 0.5
     print(f"  {h['ticker']:6s}  {w:6.2f}%   {exp:6.2f}%   {'✓' if ok else '✗ MISMATCH'}")
+    if not ok:
+        mismatches.append(h['ticker'])
+
+assert not result.get('error'), f"read_holdings_csv returned an error: {result.get('error')}"
+assert not mismatches, f"Weight mismatch for: {mismatches}"
+print("\nAll tests passed!")

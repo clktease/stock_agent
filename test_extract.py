@@ -1,5 +1,6 @@
 import sys
-sys.path.insert(0, "/mnt/f/deep_agent")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from web_server import _extract_response
 
 # Test 1: Anthropic content blocks (the broken case)
