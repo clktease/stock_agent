@@ -11,6 +11,7 @@ yfinance
 pandas
 numpy
 ta
+statsmodels
 requests
 aiohttp
 tavily-python

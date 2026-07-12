@@ -61,6 +61,63 @@ Retrieves relevant passages from curated historical market event documents.
 
 ---
 
+### Market Timing & Regime Tools (SKILL — no paid API required)
+
+These four tools were adapted from community skills that originally targeted
+FMP/FINVIZ Elite APIs, ported to run on free yfinance + TraderMonty CSV data
+instead. Each documents its own simplifications in a `methodology_note` field
+in its JSON output — read that field before presenting scores as precise.
+
+#### `get_market_breadth`
+How broadly the market rally/decline is participated in: S&P 500 breadth
+(8-day vs 200-day MA), the US market uptrend stock ratio (~2,800 stocks, 11
+sectors), and sector-level rotation (overbought/oversold, cyclical/defensive).
+Returns a 0-100 composite health score + zone (Strong/Healthy/Neutral/
+Weakening/Critical) + suggested equity exposure range. No parameters.
+
+**When to use**: "is this rally broad-based?", "which sectors are leading?",
+"is breadth deteriorating even though the index is at highs?"
+
+If the user pastes in a breadth chart *image* (S&P 500 200MA breadth chart or
+uptrend-ratio chart), read it directly with vision — the CSV data from this
+tool is the authoritative numeric source; treat the image as supplementary
+visual confirmation only, and prefer the CSV values if they conflict.
+
+#### `get_market_timing_signals`
+O'Neil-style Distribution Days (institutional selling accumulation — a
+defensive/topping signal) and Follow-Through Days (rally confirmation after a
+correction — an offensive/bottoming signal), for one or more index proxies.
+
+**Key parameters**
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| `symbols` | Comma-separated, e.g. `"SPY,QQQ"` | `"SPY,QQQ"` |
+
+**When to use**: after market close, before changing leveraged exposure,
+"has the market bottomed?", "is this uptrend getting vulnerable?"
+
+#### `get_macro_regime`
+Structural (1-2 year) macro regime via cross-asset ETF ratios: market
+concentration (RSP/SPY), size factor (IWM/SPY), credit conditions (HYG/LQD),
+equity-bond relationship (SPY/TLT + correlation), sector rotation (XLY/XLP),
+plus the 10Y-2Y yield curve when `FRED_API_KEY` is set. Classifies as
+Concentration / Broadening / Contraction / Inflationary / Transitional.
+
+**When to use**: long-term/structural positioning questions — NOT short-term
+timing (use `get_market_timing_signals` or `get_market_breadth` for that).
+
+#### `assess_market_risk`
+Composite 0-100 market top/bubble-risk score blending Distribution Days,
+breadth health, VIX complacency (6-month percentile), and defensive sector
+rotation. Does **not** include Put/Call ratio or margin debt (no free API) —
+its `missing_inputs_to_supplement_via_search` field lists what to look up via
+`search_news` before finalizing a "top is forming" call.
+
+**When to use**: "is the market topping?", "should I take profits?", "is this
+a bubble?"
+
+---
+
 ## Standard Workflows
 
 ### A. Macro context for a stock analysis
@@ -78,6 +135,26 @@ Retrieves relevant passages from curated historical market event documents.
 1. Call `get_economic_indicators()` → where are we in the cycle?
 2. Call `search_market_history("bear market characteristics")` → historical parallels
 3. Recommend positioning based on cycle phase
+
+### D. Top-down conviction synthesis (Druckenmiller-style)
+For "how should I be positioned overall?" / "what's my conviction level?"
+questions, run the market-timing tools together and synthesize in one pass
+rather than in isolation (this replaces the original multi-skill
+file-pipeline design — no `reports/` directory needed here):
+1. Call `get_market_breadth()` → participation health
+2. Call `get_market_timing_signals()` → distribution/FTD state
+3. Call `get_macro_regime()` → structural regime
+4. Call `assess_market_risk()` → tactical top/bubble risk
+5. Weigh them together: strong breadth + no distribution risk + favorable
+   regime + low top-risk = high conviction (lean toward fuller exposure);
+   conflicting signals = moderate conviction (reduce size, don't force a
+   view); deteriorating breadth + rising distribution days + elevated top
+   risk = low conviction (capital preservation). State which signals agree
+   and which conflict — don't average away a genuine disagreement.
+6. Frame the recommendation as an exposure *range*, not a single number, and
+   name the specific signal that would change your mind (Druckenmiller's
+   "when you don't see it, don't swing" — low conviction is itself a
+   legitimate answer).
 
 ## Output Format
 

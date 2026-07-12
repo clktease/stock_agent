@@ -36,6 +36,23 @@ Use at least `6mo` of data for reliable RSI and MACD values.
 
 ---
 
+### `analyze_downtrend_durations`
+Analyzes historical peak-to-trough downtrend durations for a list of tickers
+to set realistic expectations for correction length (mean-reversion holding
+periods, stop-loss timeouts). Reports median/mean/percentile duration overall
+and by market-cap tier.
+
+**Key parameters**
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| `tickers` | Comma-separated, max 15 | required |
+| `lookback_years` | Years of history | `5` |
+
+**When to call**: "how long do corrections typically last for this stock/sector?",
+setting a time-based stop, comparing correction behavior by market-cap tier.
+
+---
+
 ## Standard Workflow
 
 1. Call `get_stock_price(ticker, period="1mo")` → get current price, 52w high/low, market cap

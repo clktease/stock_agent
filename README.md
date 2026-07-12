@@ -63,8 +63,17 @@ deep_agent/
 * `calculate_technical_indicators`: 計算 SMA/EMA、RSI、MACD、布林通道、ATR 等技術指標。
 * `get_fundamental_data`: 查詢 P/E、P/B、獲利率、ROE、殖利率、分析師評級。
 * `screen_stocks`: 依市值、P/E、殖利率、產業篩選股票。
+* `build_finviz_screener_url`: 將自然語言篩股需求轉換為 FinViz 篩選器 URL。
 * `compare_stocks`: 多股票並排比較績效與估值。
 * `calculate_portfolio_metrics`: 投資組合報酬、波動率、Sharpe Ratio、最大回撤。
+* `analyze_downtrend_durations`: 分析歷史回檔（高點到低點）持續天數統計，依市值分層。
+* `get_market_breadth`: 市場寬度健康度評分（8MA/200MA 廣度指標、上升股比例、類股輪動）。
+* `get_market_timing_signals`: O'Neil 派 Distribution Day 偵測 + Follow-Through Day 底部確認訊號。
+* `get_macro_regime`: 跨資產比率分析（RSP/SPY、IWM/SPY、HYG/LQD 等）判斷結構性總經體制。
+* `assess_market_risk`: 綜合 Distribution Day、市場寬度、VIX、類股輪動的市場頭部/泡沫風險分數。
+* `calculate_position_size`: 固定比例 / ATR / Kelly 準則風險部位試算。
+* `calculate_option_strategy`: Black-Scholes 選擇權策略定價、Greeks、損益模擬（涵蓋 11 種常見策略）。
+* `find_pair_trade_candidates`: 配對交易篩選（相關性、共整合檢定、價差 Z-score）。
 
 ### 🟧 MCP (Model Context Protocol 外部工具)
 * `get_economic_indicators`: 查詢美國聯準會利率、CPI、GDP 成長率、失業率等總經數據 (透過 FRED API)。

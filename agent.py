@@ -506,12 +506,17 @@ async def build_agent(with_mcp: bool = False):
 
     Skill-bound tools -> Only the sub-agent that owns that skill
         * technical-analyst    -> get_stock_price + calculate_technical_indicators
+                                  + analyze_downtrend_durations
                                   + search_investment_knowledge (RAG)
-        * fundamental-analyst  -> get_fundamental_data
+        * fundamental-analyst  -> get_fundamental_data + build_finviz_screener_url
                                   + get_sec_filing_summary (MCP) + search_investment_knowledge (RAG)
         * news-sentiment       -> search_news + get_economic_indicators (MCP)
                                   + search_market_history (RAG)
+                                  + get_market_breadth + get_market_timing_signals
+                                  + get_macro_regime + assess_market_risk
         * portfolio-manager    -> calculate_portfolio_metrics + compare_stocks
+                                  + calculate_position_size + calculate_option_strategy
+                                  + find_pair_trade_candidates
                                   + get_economic_indicators (MCP) + search_market_history (RAG)
     """
     from langchain.chat_models import init_chat_model
@@ -533,6 +538,17 @@ async def build_agent(with_mcp: bool = False):
         compare_stocks,
         calculate_portfolio_metrics,
         read_holdings_csv,
+    )
+    from market_tools import (
+        get_market_breadth,
+        get_market_timing_signals,
+        get_macro_regime,
+        assess_market_risk,
+        analyze_downtrend_durations,
+        build_finviz_screener_url,
+        calculate_position_size,
+        calculate_option_strategy,
+        find_pair_trade_candidates,
     )
 
     # -- Pre-build / load RAG vector indexes at startup -------------------------
@@ -615,14 +631,20 @@ async def build_agent(with_mcp: bool = False):
 
     # -- Skill-bound tool sets (per sub-agent) ----------------------------------
     technical_tools   = [get_stock_price, calculate_technical_indicators,
+                         analyze_downtrend_durations,
                          search_investment_knowledge]
     fundamental_tools = [get_fundamental_data, get_sec_filing_summary,
+                         build_finviz_screener_url,
                          search_investment_knowledge]
     sentiment_tools   = ([search_news] if search_news else []) + [get_economic_indicators,
-                         search_market_history, get_recent_statements]
+                         search_market_history, get_recent_statements,
+                         get_market_breadth, get_market_timing_signals,
+                         get_macro_regime, assess_market_risk]
     portfolio_tools   = [calculate_portfolio_metrics, compare_stocks,
                          get_economic_indicators, search_market_history,
-                         read_holdings_csv]
+                         read_holdings_csv,
+                         calculate_position_size, calculate_option_strategy,
+                         find_pair_trade_candidates]
 
     # -- Sub-agent configs with targeted tool sets ------------------------------
     subagents_config = [
@@ -655,7 +677,11 @@ async def build_agent(with_mcp: bool = False):
              get_fundamental_data, calculate_portfolio_metrics,
              get_economic_indicators, get_sec_filing_summary,
              search_investment_knowledge, search_market_history,
-             read_holdings_csv, get_recent_statements]
+             read_holdings_csv, get_recent_statements,
+             get_market_breadth, get_market_timing_signals, get_macro_regime,
+             assess_market_risk, analyze_downtrend_durations,
+             build_finviz_screener_url, calculate_position_size,
+             calculate_option_strategy, find_pair_trade_candidates]
             + global_tools
         )
     }.values())   # deduplicate by identity

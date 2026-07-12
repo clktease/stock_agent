@@ -89,3 +89,48 @@ Single-statement-driven signals can be noisy, unverified, or manipulated
 (e.g. meme-stock dynamics, pump-and-dump risk). This is not a formal
 recommendation — verify before acting.
 ```
+
+## Global Market Environment Briefing
+
+For "what's the overall market environment/mood right now?" style requests
+(daily/weekly briefings, risk-on/risk-off checks, pre-trade context), use
+`search_news` to collect current readings rather than relying on stale
+knowledge:
+
+1. Search for major indices (S&P 500, NASDAQ, Dow, Nikkei 225, key European
+   indices), USD/JPY and major FX pairs, WTI crude, Gold, US 2Y/10Y Treasury
+   yields, and VIX.
+2. Classify: trend direction (up/down/range), risk sentiment (risk-on vs
+   risk-off), volatility regime from VIX (<15 calm, 15-20 normal, 20-30
+   elevated, >30 stressed).
+3. Note upcoming high-impact events (FOMC, CPI, NFP, GDP) and rank by
+   importance (⭐⭐⭐ critical / ⭐⭐ important / ⭐ reference).
+4. Cross-check quantitative context from `get_market_breadth` /
+   `assess_market_risk` (macro-research skill) rather than relying on
+   narrative alone.
+5. Summarize as a short "Market Summary" block (indices + FX + VIX + key
+   events + one-line environment call), then expand into detail sections
+   (US/Asia/Europe, FX & commodities, risk factors) only if the user wants
+   more depth.
+
+## Trending Theme Detection (lightweight)
+
+For "what market themes are trending?" / "which sectors are hot/cold?"
+requests, this is a narrower adaptation of a heavier FINVIZ-industry-scan
+skill — it leans on tools already available here rather than a new scraper:
+
+1. Call `get_market_breadth` (macro-research skill) and read its
+   `sector_summary` block for quantitative uptrend/downtrend/overbought/
+   oversold sectors — this is the "heat" signal.
+2. For the top 2-3 hottest and coldest sectors, use `search_news` with
+   queries like `"[sector/theme] stocks momentum [month] [year]"` to confirm
+   whether the narrative is strengthening, fading, or absent.
+3. Combine into a confidence call: quantitative hot + strong narrative =
+   High confidence; quantitative hot + weak/no narrative = Medium
+   (momentum may be fading or narrative lagging price); quantitative cold +
+   strong narrative = Medium (narrative may lead price); neither = Low.
+4. Flag crowded-trade risk qualitatively (heavy recent media coverage, many
+   new thematic ETFs/products launched) rather than computing an ETF-count
+   score — note this is a judgment call, not a hard number.
+5. Always caveat: this is momentum detection, not fundamental value — past
+   thematic strength doesn't guarantee continuation.

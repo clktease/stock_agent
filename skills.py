@@ -760,6 +760,8 @@ def read_holdings_csv(file_path: str) -> str:
 # Export all skills
 # ─────────────────────────────────────────────────────────────────────────────
 
+from market_tools import ALL_MARKET_TOOLS
+
 ALL_SKILLS = [
     get_stock_price,
     calculate_technical_indicators,
@@ -768,4 +770,4 @@ ALL_SKILLS = [
     compare_stocks,
     calculate_portfolio_metrics,
     read_holdings_csv,
-]
+] + ALL_MARKET_TOOLS

@@ -29,6 +29,29 @@ Fetches comprehensive financial data from Yahoo Finance for a given ticker.
 
 ---
 
+### `build_finviz_screener_url`
+Translates a natural-language screening request into FinViz filter codes
+(you interpret intent; this tool only assembles the URL — no API key or
+browser needed). Common filter families: `cap_*` (market cap), `fa_*`
+(fundamentals, e.g. `fa_div_o3` = yield > 3%, `fa_pe_u20` = P/E < 20), `ta_*`
+(technicals, e.g. `ta_rsi_os30` = RSI oversold), `sec_*`/`ind_*`
+(sector/industry), `sh_*` (ownership/shares), `geo_*` (geography).
+
+**Key parameters**
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| `filters` | Comma-separated FinViz codes, e.g. `"cap_small,fa_div_o3,fa_pe_u20,geo_usa"` | required |
+| `view` | `overview` `valuation` `ownership` `performance` `financial` `technical` `custom` | `overview` |
+| `order` | Sort field, e.g. `"-marketcap"`, `"dividendyield"` | none |
+
+**When to use**: broader discovery screens beyond `screen_stocks`'s simple
+market-cap/P/E/yield filters — e.g. "high dividend growth small caps
+excluding yield traps", "oversold large caps near 52-week lows", "Minervini
+trend-template stocks". Present the interpreted filter table to the user for
+confirmation before building the URL.
+
+---
+
 ## Standard Workflow
 
 1. Call `get_fundamental_data(ticker)` → get all financial metrics
